@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import sys
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
@@ -33,6 +34,7 @@ from beets.autotag.match import distance
 from beets.test import _common
 from beets.test.helper import (
     BeetsTestCase,
+    ItemInDBTestCase,
     PluginTestCase,
     capture_stdout,
     control_stdin,
@@ -115,7 +117,7 @@ class RemoveTest(BeetsTestCase):
         self.io.install()
 
         # Copy a file into the library.
-        self.item_path = os.path.join(_common.RSRC, b"full.mp3")
+        self.item_path = self.resource_path
         self.i = library.Item.from_path(self.item_path)
         self.lib.add(self.i)
         self.i.move(operation=MoveOperation.COPY)
@@ -125,26 +127,26 @@ class RemoveTest(BeetsTestCase):
         commands.remove_items(self.lib, "", False, False, False)
         items = self.lib.items()
         assert len(list(items)) == 0
-        self.assertExists(self.i.path)
+        assert self.item_path.exists()
 
     def test_remove_items_with_delete(self):
         self.io.addinput("y")
         commands.remove_items(self.lib, "", False, True, False)
         items = self.lib.items()
         assert len(list(items)) == 0
-        self.assertNotExists(self.i.path)
+        assert not Path(os.fsdecode(self.i.path)).exists()
 
     def test_remove_items_with_force_no_delete(self):
         commands.remove_items(self.lib, "", False, False, True)
         items = self.lib.items()
         assert len(list(items)) == 0
-        self.assertExists(self.i.path)
+        assert self.item_path.exists()
 
     def test_remove_items_with_force_delete(self):
         commands.remove_items(self.lib, "", False, True, True)
         items = self.lib.items()
         assert len(list(items)) == 0
-        self.assertNotExists(self.i.path)
+        assert not Path(os.fsdecode(self.i.path)).exists()
 
     def test_remove_items_select_with_delete(self):
         i2 = library.Item.from_path(self.item_path)
@@ -441,21 +443,16 @@ class WriteTest(BeetsTestCase):
         assert f"{old_title} -> new title" in output
 
 
-class MoveTest(BeetsTestCase):
+class MoveTest(ItemInDBTestCase):
     def setUp(self):
         super().setUp()
 
         self.io.install()
 
-        self.itempath = os.path.join(self.libdir, b"srcfile")
-        shutil.copy(
-            syspath(os.path.join(_common.RSRC, b"full.mp3")),
-            syspath(self.itempath),
-        )
+        self.initial_item_path = self.item_path
+        shutil.copy(self.resource_path, self.initial_item_path)
 
         # Add a file to the library but don't copy it in yet.
-        self.i = library.Item.from_path(self.itempath)
-        self.lib.add(self.i)
         self.album = self.lib.add_album([self.i])
 
         # Alternate destination directory.
@@ -478,71 +475,71 @@ class MoveTest(BeetsTestCase):
         self._move()
         self.i.load()
         assert b"libdir" in self.i.path
-        self.assertExists(self.i.path)
-        self.assertNotExists(self.itempath)
+        assert self.item_path.exists()
+        assert not self.initial_item_path.exists()
 
     def test_copy_item(self):
         self._move(copy=True)
         self.i.load()
         assert b"libdir" in self.i.path
-        self.assertExists(self.i.path)
-        self.assertExists(self.itempath)
+        assert self.item_path.exists()
+        assert self.initial_item_path.exists()
 
     def test_move_album(self):
         self._move(album=True)
         self.i.load()
         assert b"libdir" in self.i.path
-        self.assertExists(self.i.path)
-        self.assertNotExists(self.itempath)
+        assert self.item_path.exists()
+        assert not self.initial_item_path.exists()
 
     def test_copy_album(self):
         self._move(copy=True, album=True)
         self.i.load()
         assert b"libdir" in self.i.path
-        self.assertExists(self.i.path)
-        self.assertExists(self.itempath)
+        assert self.item_path.exists()
+        assert self.initial_item_path.exists()
 
     def test_move_item_custom_dir(self):
         self._move(dest=self.otherdir)
         self.i.load()
         assert b"testotherdir" in self.i.path
-        self.assertExists(self.i.path)
-        self.assertNotExists(self.itempath)
+        assert self.item_path.exists()
+        assert not self.initial_item_path.exists()
 
     def test_move_album_custom_dir(self):
         self._move(dest=self.otherdir, album=True)
         self.i.load()
         assert b"testotherdir" in self.i.path
-        self.assertExists(self.i.path)
-        self.assertNotExists(self.itempath)
+        assert self.item_path.exists()
+        assert not self.initial_item_path.exists()
 
     def test_pretend_move_item(self):
         self._move(dest=self.otherdir, pretend=True)
         self.i.load()
-        assert b"srcfile" in self.i.path
+        assert self.item_path == self.initial_item_path
 
     def test_pretend_move_album(self):
         self._move(album=True, pretend=True)
         self.i.load()
-        assert b"srcfile" in self.i.path
+        assert self.item_path == self.initial_item_path
 
     def test_export_item_custom_dir(self):
         self._move(dest=self.otherdir, export=True)
         self.i.load()
-        assert self.i.path == self.itempath
-        self.assertExists(self.otherdir)
+        assert self.item_path == self.initial_item_path
+        assert Path(os.fsdecode(self.otherdir)).exists()
 
     def test_export_album_custom_dir(self):
         self._move(dest=self.otherdir, album=True, export=True)
         self.i.load()
-        assert self.i.path == self.itempath
-        self.assertExists(self.otherdir)
+        assert self.item_path == self.initial_item_path
+        assert Path(os.fsdecode(self.otherdir)).exists()
 
     def test_pretend_export_item(self):
         self._move(dest=self.otherdir, pretend=True, export=True)
         self.i.load()
-        assert b"srcfile" in self.i.path
-        self.assertNotExists(self.otherdir)
+        assert self.item_path == self.initial_item_path
+        assert not Path(os.fsdecode(self.otherdir)).exists()
 
 
 class UpdateTest(BeetsTestCase):
@@ -608,11 +605,11 @@ class UpdateTest(BeetsTestCase):
 
     def test_delete_removes_album_art(self):
         artpath = self.album.artpath
-        self.assertExists(artpath)
+        assert Path(os.fsdecode(artpath)).exists()
         util.remove(self.i.path)
         util.remove(self.i2.path)
         self._update()
-        self.assertNotExists(artpath)
+        assert not Path(os.fsdecode(artpath)).exists()
 
     def test_modified_metadata_detected(self):
         mf = MediaFile(syspath(self.i.path))

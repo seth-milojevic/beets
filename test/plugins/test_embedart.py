@@ -13,10 +13,12 @@
 # included in all copies or substantial portions of the Software.
 
 
+import os
 import os.path
 import shutil
 import tempfile
 import unittest
+from pathlib import Path
 from test.test_art_resize import DummyIMBackend
 from unittest.mock import MagicMock, patch
 
@@ -180,7 +182,9 @@ class EmbedartCliTest(PluginMixin, FetchImageHelper, BeetsTestCase):
 
         self.run_command("extractart", "-n", "extracted")
 
-        self.assertExists(os.path.join(albumpath, b"extracted.png"))
+        assert Path(
+            os.fsdecode(os.path.join(albumpath, b"extracted.png"))
+        ).exists()
 
     def test_extracted_extension(self):
         resource_path = os.path.join(_common.RSRC, b"image-jpeg.mp3")
@@ -191,7 +195,9 @@ class EmbedartCliTest(PluginMixin, FetchImageHelper, BeetsTestCase):
 
         self.run_command("extractart", "-n", "extracted")
 
-        self.assertExists(os.path.join(albumpath, b"extracted.jpg"))
+        assert Path(
+            os.fsdecode(os.path.join(albumpath, b"extracted.jpg"))
+        ).exists()
 
     def test_clear_art_with_yes_input(self):
         self._setup_data()

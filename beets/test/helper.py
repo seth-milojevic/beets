@@ -183,7 +183,19 @@ class TestHelper(_common.Assertions, ConfigMixin):
     fixtures.
     """
 
+    resource_path = Path(os.fsdecode(_common.RSRC)) / "full.mp3"
+
     db_on_disk: ClassVar[bool] = False
+
+    @cached_property
+    def lib_path(self) -> Path:
+        lib_path = Path(os.fsdecode(self.temp_dir)) / "libdir"
+        lib_path.mkdir(exist_ok=True)
+        return lib_path
+
+    @cached_property
+    def libdir(self) -> bytes:
+        return bytestring_path(self.lib_path)
 
     # TODO automate teardown through hook registration
 
@@ -463,6 +475,10 @@ class ItemInDBTestCase(BeetsTestCase):
         super().setUp()
         self.i = _common.item(self.lib)
 
+    @property
+    def item_path(self) -> Path:
+        return Path(os.fsdecode(self.i.path))
+
 
 class PluginMixin(ConfigMixin):
     plugin: ClassVar[str]
@@ -538,7 +554,6 @@ class ImportHelper(TestHelper):
     autotagging library and several assertions for the library.
     """
 
-    resource_path = syspath(os.path.join(_common.RSRC, b"full.mp3"))
     default_import_config = {
         "autotag": True,
         "copy": True,
@@ -655,13 +670,7 @@ class ImportHelper(TestHelper):
         """Join the ``segments`` and assert that this path exists in the
         library directory.
         """
-        self.assertExists(os.path.join(self.libdir, *segments))
-
-    def assert_file_not_in_lib(self, *segments):
-        """Join the ``segments`` and assert that this path does not
-        exist in the library directory.
-        """
-        self.assertNotExists(os.path.join(self.libdir, *segments))
+        assert self.lib_path.joinpath(*segments).exists()
 
     def assert_lib_dir_empty(self):
         assert not os.listdir(syspath(self.libdir))

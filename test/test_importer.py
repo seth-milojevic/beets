@@ -110,9 +110,7 @@ class NonAutotaggedImportTest(AsIsImporterMixin, ImportTestCase):
         self.run_asis_importer()
         for mediafile in self.import_media:
             self.assert_file_in_lib(
-                b"Tag Artist",
-                b"Tag Album",
-                util.bytestring_path(f"{mediafile.title}.mp3"),
+                "Tag Artist", "Tag Album", "Tag Track 1.mp3"
             )
 
     def test_threaded_import_copy_arrives(self):
@@ -121,90 +119,81 @@ class NonAutotaggedImportTest(AsIsImporterMixin, ImportTestCase):
         self.run_asis_importer()
         for mediafile in self.import_media:
             self.assert_file_in_lib(
-                b"Tag Artist",
-                b"Tag Album",
-                util.bytestring_path(f"{mediafile.title}.mp3"),
+                "Tag Artist", "Tag Album", "Tag Track 1.mp3"
             )
 
     def test_import_with_move_deletes_import_files(self):
         for mediafile in self.import_media:
-            self.assertExists(mediafile.path)
+            assert Path(mediafile.path).exists()
         self.run_asis_importer(move=True)
         for mediafile in self.import_media:
-            self.assertNotExists(mediafile.path)
+            assert not Path(mediafile.path).exists()
 
     def test_import_with_move_prunes_directory_empty(self):
-        self.assertExists(os.path.join(self.import_dir, b"album"))
+        album_path = self.import_path / "album"
+        assert album_path.exists()
         self.run_asis_importer(move=True)
-        self.assertNotExists(os.path.join(self.import_dir, b"album"))
+        assert not album_path.exists()
 
     def test_import_with_move_prunes_with_extra_clutter(self):
         self.touch(os.path.join(self.import_dir, b"album", b"alog.log"))
         config["clutter"] = ["*.log"]
 
-        self.assertExists(os.path.join(self.import_dir, b"album"))
+        album_path = self.import_path / "album"
+        assert album_path.exists()
         self.run_asis_importer(move=True)
-        self.assertNotExists(os.path.join(self.import_dir, b"album"))
+        assert not album_path.exists()
 
     def test_threaded_import_move_arrives(self):
         self.run_asis_importer(move=True, threaded=True)
         for mediafile in self.import_media:
             self.assert_file_in_lib(
-                b"Tag Artist",
-                b"Tag Album",
-                util.bytestring_path(f"{mediafile.title}.mp3"),
+                "Tag Artist", "Tag Album", "Tag Track 1.mp3"
             )
 
     def test_threaded_import_move_deletes_import(self):
         self.run_asis_importer(move=True, threaded=True)
         for mediafile in self.import_media:
-            self.assertNotExists(mediafile.path)
+            assert not Path(mediafile.path).exists()
 
     def test_import_without_delete_retains_files(self):
         self.run_asis_importer(delete=False)
         for mediafile in self.import_media:
-            self.assertExists(mediafile.path)
+            assert Path(mediafile.path).exists()
 
     def test_import_with_delete_removes_files(self):
         self.run_asis_importer(delete=True)
         for mediafile in self.import_media:
-            self.assertNotExists(mediafile.path)
+            assert not Path(mediafile.path).exists()
 
     def test_import_with_delete_prunes_directory_empty(self):
-        self.assertExists(os.path.join(self.import_dir, b"album"))
+        album_path = self.import_path / "album"
+        assert album_path.exists()
         self.run_asis_importer(delete=True)
-        self.assertNotExists(os.path.join(self.import_dir, b"album"))
+        assert not album_path.exists()
 
     @unittest.skipUnless(_common.HAVE_SYMLINK, "need symlinks")
     def test_import_link_arrives(self):
         self.run_asis_importer(link=True)
         for mediafile in self.import_media:
-            filename = os.path.join(
-                self.libdir,
-                b"Tag Artist",
-                b"Tag Album",
-                util.bytestring_path(f"{mediafile.title}.mp3"),
+            path = (
+                self.lib_path / "Tag Artist" / "Tag Album" / "Tag Track 1.mp3"
             )
-            self.assertExists(filename)
-            assert os.path.islink(syspath(filename))
-            self.assert_equal_path(
-                util.bytestring_path(os.readlink(syspath(filename))),
-                mediafile.path,
-            )
+            assert path.exists()
+            assert path.is_symlink()
+            self.assert_equal_path(path.resolve(), mediafile.path)
 
     @unittest.skipUnless(_common.HAVE_HARDLINK, "need hardlinks")
     def test_import_hardlink_arrives(self):
         self.run_asis_importer(hardlink=True)
         for mediafile in self.import_media:
-            filename = os.path.join(
-                self.libdir,
-                b"Tag Artist",
-                b"Tag Album",
-                util.bytestring_path(f"{mediafile.title}.mp3"),
+            path = (
+                self.lib_path / "Tag Artist" / "Tag Album" / "Tag Track 1.mp3"
             )
-            self.assertExists(filename)
+            assert path.exists()
+
             s1 = os.stat(syspath(mediafile.path))
-            s2 = os.stat(syspath(filename))
+            s2 = os.stat(path)
             assert (s1[stat.ST_INO], s1[stat.ST_DEV]) == (
                 s2[stat.ST_INO],
                 s2[stat.ST_DEV],
@@ -217,9 +206,7 @@ class NonAutotaggedImportTest(AsIsImporterMixin, ImportTestCase):
         self.run_asis_importer(reflink=True)
         for mediafile in self.import_media:
             self.assert_file_in_lib(
-                b"Tag Artist",
-                b"Tag Album",
-                util.bytestring_path(f"{mediafile.title}.mp3"),
+                "Tag Artist", "Tag Album", "Tag Track 1.mp3"
             )
 
     def test_import_reflink_auto_arrives(self):
@@ -227,9 +214,7 @@ class NonAutotaggedImportTest(AsIsImporterMixin, ImportTestCase):
         self.run_asis_importer(reflink="auto")
         for mediafile in self.import_media:
             self.assert_file_in_lib(
-                b"Tag Artist",
-                b"Tag Album",
-                util.bytestring_path(f"{mediafile.title}.mp3"),
+                "Tag Artist", "Tag Album", "Tag Track 1.mp3"
             )
 
 
@@ -260,9 +245,9 @@ class RmTempTest(BeetsTestCase):
         archive_task = importer.ArchiveImportTask(zip_path)
         archive_task.extract()
         tmp_path = archive_task.toppath
-        self.assertExists(tmp_path)
+        assert Path(os.fsdecode(tmp_path)).exists()
         archive_task.finalize(self)
-        self.assertNotExists(tmp_path)
+        assert not Path(os.fsdecode(tmp_path)).exists()
 
 
 class ImportZipTest(AsIsImporterMixin, ImportTestCase):
@@ -340,7 +325,7 @@ class ImportSingletonTest(ImportTestCase):
 
         self.importer.add_choice(importer.action.ASIS)
         self.importer.run()
-        self.assert_file_in_lib(b"singletons", b"Tag Track 1.mp3")
+        self.assert_file_in_lib("singletons", "Tag Track 1.mp3")
 
     def test_apply_candidate_adds_track(self):
         assert self.lib.items().get() is None
@@ -359,7 +344,7 @@ class ImportSingletonTest(ImportTestCase):
 
         self.importer.add_choice(importer.action.APPLY)
         self.importer.run()
-        self.assert_file_in_lib(b"singletons", b"Applied Track 1.mp3")
+        self.assert_file_in_lib("singletons", "Applied Track 1.mp3")
 
     def test_skip_does_not_add_first_track(self):
         self.importer.add_choice(importer.action.SKIP)
@@ -460,7 +445,7 @@ class ImportTest(ImportTestCase):
 
         self.importer.add_choice(importer.action.ASIS)
         self.importer.run()
-        self.assert_file_in_lib(b"Tag Artist", b"Tag Album", b"Tag Track 1.mp3")
+        self.assert_file_in_lib("Tag Artist", "Tag Album", "Tag Track 1.mp3")
 
     def test_apply_candidate_adds_album(self):
         assert self.lib.albums().get() is None
@@ -482,7 +467,7 @@ class ImportTest(ImportTestCase):
         self.importer.add_choice(importer.action.APPLY)
         self.importer.run()
         self.assert_file_in_lib(
-            b"Applied Artist", b"Applied Album", b"Applied Track 1.mp3"
+            "Applied Artist", "Applied Album", "Applied Track 1.mp3"
         )
 
     def test_apply_from_scratch_removes_other_metadata(self):
@@ -514,22 +499,22 @@ class ImportTest(ImportTestCase):
     def test_apply_with_move_deletes_import(self):
         config["import"]["move"] = True
 
-        import_file = os.path.join(self.import_dir, b"album", b"track_1.mp3")
-        self.assertExists(import_file)
+        track_path = Path(self.import_media[0].path)
+        assert track_path.exists()
 
         self.importer.add_choice(importer.action.APPLY)
         self.importer.run()
-        self.assertNotExists(import_file)
+        assert not track_path.exists()
 
     def test_apply_with_delete_deletes_import(self):
         config["import"]["delete"] = True
 
-        import_file = os.path.join(self.import_dir, b"album", b"track_1.mp3")
-        self.assertExists(import_file)
+        track_path = Path(self.import_media[0].path)
+        assert track_path.exists()
 
         self.importer.add_choice(importer.action.APPLY)
         self.importer.run()
-        self.assertNotExists(import_file)
+        assert not track_path.exists()
 
     def test_skip_does_not_add_track(self):
         self.importer.add_choice(importer.action.SKIP)
@@ -662,7 +647,7 @@ class ImportTracksTest(ImportTestCase):
         self.importer.add_choice(importer.action.APPLY)
         self.importer.add_choice(importer.action.APPLY)
         self.importer.run()
-        self.assert_file_in_lib(b"singletons", b"Applied Track 1.mp3")
+        self.assert_file_in_lib("singletons", "Applied Track 1.mp3")
 
 
 class ImportCompilationTest(ImportTestCase):
@@ -832,17 +817,18 @@ class ImportExistingTest(ImportTestCase):
         medium.title = "New Title"
         medium.save()
 
-        old_path = os.path.join(
-            b"Applied Artist", b"Applied Album", b"Applied Track 1.mp3"
+        old_path = (
+            self.lib_path
+            / "Applied Artist"
+            / "Applied Album"
+            / "Applied Track 1.mp3"
         )
-        self.assert_file_in_lib(old_path)
+        assert old_path.exists()
 
         self.reimporter.add_choice(importer.action.ASIS)
         self.reimporter.run()
-        self.assert_file_in_lib(
-            b"Applied Artist", b"Applied Album", b"New Title.mp3"
-        )
-        self.assert_file_not_in_lib(old_path)
+        assert old_path.with_name("New Title.mp3").exists()
+        assert not old_path.exists()
 
     def test_asis_updated_without_copy_does_not_move_file(self):
         self.importer.run()
@@ -850,18 +836,19 @@ class ImportExistingTest(ImportTestCase):
         medium.title = "New Title"
         medium.save()
 
-        old_path = os.path.join(
-            b"Applied Artist", b"Applied Album", b"Applied Track 1.mp3"
+        old_path = (
+            self.lib_path
+            / "Applied Artist"
+            / "Applied Album"
+            / "Applied Track 1.mp3"
         )
-        self.assert_file_in_lib(old_path)
+        assert old_path.exists()
 
         config["import"]["copy"] = False
         self.reimporter.add_choice(importer.action.ASIS)
         self.reimporter.run()
-        self.assert_file_not_in_lib(
-            b"Applied Artist", b"Applied Album", b"New Title.mp3"
-        )
-        self.assert_file_in_lib(old_path)
+        assert not old_path.with_name("New Title.mp3").exists()
+        assert old_path.exists()
 
     def test_outside_file_is_copied(self):
         config["import"]["copy"] = False
@@ -873,14 +860,14 @@ class ImportExistingTest(ImportTestCase):
         self.reimporter = self.setup_importer()
         self.reimporter.add_choice(importer.action.APPLY)
         self.reimporter.run()
-        new_path = os.path.join(
-            b"Applied Artist", b"Applied Album", b"Applied Track 1.mp3"
+        new_path = (
+            self.lib_path
+            / "Applied Artist"
+            / "Applied Album"
+            / "Applied Track 1.mp3"
         )
-
-        self.assert_file_in_lib(new_path)
-        self.assert_equal_path(
-            self.lib.items().get().path, os.path.join(self.libdir, new_path)
-        )
+        assert new_path.exists()
+        assert Path(os.fsdecode(self.lib.items().get().path)) == new_path
 
     def test_outside_file_is_moved(self):
         config["import"]["copy"] = False
@@ -892,7 +879,7 @@ class ImportExistingTest(ImportTestCase):
         self.reimporter = self.setup_importer(move=True)
         self.reimporter.add_choice(importer.action.APPLY)
         self.reimporter.run()
-        self.assertNotExists(self.import_media[0].path)
+        assert not Path(self.import_media[0].path).exists()
 
 
 class GroupAlbumsImportTest(ImportTestCase):
@@ -1120,12 +1107,12 @@ class ImportDuplicateAlbumTest(ImportTestCase):
     def test_remove_duplicate_album(self):
         item = self.lib.items().get()
         assert item.title == "t\xeftle 0"
-        self.assertExists(item.path)
+        assert Path(os.fsdecode(item.path)).exists()
 
         self.importer.default_resolution = self.importer.Resolution.REMOVE
         self.importer.run()
 
-        self.assertNotExists(item.path)
+        assert not Path(os.fsdecode(item.path)).exists()
         assert len(self.lib.albums()) == 1
         assert len(self.lib.items()) == 1
         item = self.lib.items().get()
@@ -1135,7 +1122,7 @@ class ImportDuplicateAlbumTest(ImportTestCase):
         config["import"]["autotag"] = False
         item = self.lib.items().get()
         assert item.title == "t\xeftle 0"
-        self.assertExists(item.path)
+        assert Path(os.fsdecode(item.path)).exists()
 
         # Imported item has the same artist and album as the one in the
         # library.
@@ -1151,7 +1138,7 @@ class ImportDuplicateAlbumTest(ImportTestCase):
         self.importer.default_resolution = self.importer.Resolution.REMOVE
         self.importer.run()
 
-        self.assertExists(item.path)
+        assert Path(os.fsdecode(item.path)).exists()
         assert len(self.lib.albums()) == 2
         assert len(self.lib.items()) == 2
 
@@ -1242,12 +1229,12 @@ class ImportDuplicateSingletonTest(ImportTestCase):
     def test_remove_duplicate(self):
         item = self.lib.items().get()
         assert item.mb_trackid == "old trackid"
-        self.assertExists(item.path)
+        assert Path(os.fsdecode(item.path)).exists()
 
         self.importer.default_resolution = self.importer.Resolution.REMOVE
         self.importer.run()
 
-        self.assertNotExists(item.path)
+        assert not Path(os.fsdecode(item.path)).exists()
         assert len(self.lib.items()) == 1
         item = self.lib.items().get()
         assert item.mb_trackid == "new trackid"
@@ -1651,9 +1638,9 @@ class ReimportTest(ImportTestCase):
         new_album = self._album()
         new_artpath = new_album.art_destination(art_source)
         assert new_album.artpath == new_artpath
-        self.assertExists(new_artpath)
+        assert Path(os.fsdecode(new_artpath)).exists()
         if new_artpath != old_artpath:
-            self.assertNotExists(old_artpath)
+            assert not Path(os.fsdecode(old_artpath)).exists()
 
     def test_reimported_album_has_new_flexattr(self):
         self._setup_session()

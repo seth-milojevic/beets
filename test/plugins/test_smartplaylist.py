@@ -13,7 +13,9 @@
 # included in all copies or substantial portions of the Software.
 
 
+import os
 from os import fsdecode, path, remove
+from pathlib import Path
 from shutil import rmtree
 from tempfile import mkdtemp
 from unittest.mock import MagicMock, Mock, PropertyMock
@@ -178,7 +180,7 @@ class SmartPlaylistTest(BeetsTestCase):
         lib.albums.assert_called_once_with(a_q, None)
 
         m3u_filepath = path.join(dir, b"ta_ga_da-my_playlist_.m3u")
-        self.assertExists(m3u_filepath)
+        assert Path(os.fsdecode(m3u_filepath)).exists()
         with open(syspath(m3u_filepath), "rb") as f:
             content = f.read()
         rmtree(syspath(dir))
@@ -223,7 +225,7 @@ class SmartPlaylistTest(BeetsTestCase):
         lib.albums.assert_called_once_with(a_q, None)
 
         m3u_filepath = path.join(dir, b"ta_ga_da-my_playlist_.m3u")
-        self.assertExists(m3u_filepath)
+        assert Path(os.fsdecode(m3u_filepath)).exists()
         with open(syspath(m3u_filepath), "rb") as f:
             content = f.read()
         rmtree(syspath(dir))
@@ -275,7 +277,7 @@ class SmartPlaylistTest(BeetsTestCase):
         lib.albums.assert_called_once_with(a_q, None)
 
         m3u_filepath = path.join(dir, b"ta_ga_da-my_playlist_.m3u")
-        self.assertExists(m3u_filepath)
+        assert Path(os.fsdecode(m3u_filepath)).exists()
         with open(syspath(m3u_filepath), "rb") as f:
             content = f.read()
         rmtree(syspath(dir))
@@ -325,7 +327,7 @@ class SmartPlaylistTest(BeetsTestCase):
         lib.albums.assert_called_once_with(a_q, None)
 
         m3u_filepath = path.join(dir, b"ta_ga_da-my_playlist_.m3u")
-        self.assertExists(m3u_filepath)
+        assert Path(os.fsdecode(m3u_filepath)).exists()
         with open(syspath(m3u_filepath), "rb") as f:
             content = f.read()
         rmtree(syspath(dir))
@@ -354,7 +356,7 @@ class SmartPlaylistCLITest(PluginTestCase):
 
         self.run_with_output("splupdate", "my_playlist")
         m3u_path = path.join(self.temp_dir, b"my_playlist.m3u")
-        self.assertExists(m3u_path)
+        assert Path(os.fsdecode(m3u_path)).exists()
         with open(syspath(m3u_path), "rb") as f:
             assert f.read() == self.item.path + b"\n"
         remove(syspath(m3u_path))

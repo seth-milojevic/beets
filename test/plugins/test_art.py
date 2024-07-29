@@ -17,6 +17,7 @@
 
 import os
 import shutil
+from pathlib import Path
 from unittest.mock import patch
 
 import confuse
@@ -221,13 +222,13 @@ class FetchImageTest(FetchImageTestCase):
         self.mock_response(self.URL, "image/png")
         self.source.fetch_image(self.candidate, self.settings)
         assert os.path.splitext(self.candidate.path)[1] == b".png"
-        self.assertExists(self.candidate.path)
+        assert Path(os.fsdecode(self.candidate.path)).exists()
 
     def test_does_not_rely_on_server_content_type(self):
         self.mock_response(self.URL, "image/jpeg", "image/png")
         self.source.fetch_image(self.candidate, self.settings)
         assert os.path.splitext(self.candidate.path)[1] == b".png"
-        self.assertExists(self.candidate.path)
+        assert Path(os.fsdecode(self.candidate.path)).exists()
 
 
 class FSArtTest(UseThePlugin):
@@ -782,7 +783,7 @@ class ArtImporterTest(UseThePlugin):
             assert artpath == os.path.join(
                 os.path.dirname(self.i.path), b"cover.jpg"
             )
-            self.assertExists(artpath)
+            assert Path(os.fsdecode(artpath)).exists()
         else:
             assert artpath is None
         return artpath
@@ -801,12 +802,12 @@ class ArtImporterTest(UseThePlugin):
 
     def test_leave_original_file_in_place(self):
         self._fetch_art(True)
-        self.assertExists(self.art_file)
+        assert Path(os.fsdecode(self.art_file)).exists()
 
     def test_delete_original_file(self):
         self.plugin.src_removed = True
         self._fetch_art(True)
-        self.assertNotExists(self.art_file)
+        assert not Path(os.fsdecode(self.art_file)).exists()
 
     def test_do_not_delete_original_if_already_in_place(self):
         artdest = os.path.join(os.path.dirname(self.i.path), b"cover.jpg")
@@ -826,7 +827,7 @@ class ArtImporterTest(UseThePlugin):
         self.plugin.batch_fetch_art(
             self.lib, self.lib.albums(), force=False, quiet=False
         )
-        self.assertExists(self.album.artpath)
+        assert Path(os.fsdecode(self.album.artpath)).exists()
 
 
 class ArtForAlbumTest(UseThePlugin):
@@ -863,7 +864,7 @@ class ArtForAlbumTest(UseThePlugin):
         super().tearDown()
 
     def _assertImageIsValidArt(self, image_file, should_exist):  # noqa
-        self.assertExists(image_file)
+        assert Path(os.fsdecode(image_file)).exists()
         self.image_file = image_file
 
         candidate = self.plugin.art_for_album(self.album, [""], True)
@@ -871,7 +872,7 @@ class ArtForAlbumTest(UseThePlugin):
         if should_exist:
             assert candidate is not None
             assert candidate.path == self.image_file
-            self.assertExists(candidate.path)
+            assert Path(os.fsdecode(candidate.path)).exists()
         else:
             assert candidate is None
 
