@@ -74,10 +74,6 @@ class ImportAddedTest(PluginMixin, ImportTestCase):
             "No MediaFile found for Item " + displayable_path(item.path)
         )
 
-    def assertEqualTimes(self, first, second, msg=None):  # noqa
-        """For comparing file modification times at a sufficient precision"""
-        assert first == pytest.approx(second, rel=1e-4), msg
-
     def assertAlbumImport(self):  # noqa
         self.importer.run()
         album = self.lib.albums().get()
@@ -101,10 +97,12 @@ class ImportAddedTest(PluginMixin, ImportTestCase):
         album = self.lib.albums().get()
         assert album.added == self.min_mtime
         for item in album.items():
-            self.assertEqualTimes(item.added, self.min_mtime)
+            assert item.added == pytest.approx(self.min_mtime, rel=1e-4)
             mediafile_mtime = os.path.getmtime(self.find_media_file(item).path)
-            self.assertEqualTimes(item.mtime, mediafile_mtime)
-            self.assertEqualTimes(os.path.getmtime(item.path), mediafile_mtime)
+            assert item.mtime == pytest.approx(mediafile_mtime, rel=1e-4)
+            assert os.path.getmtime(item.path) == pytest.approx(
+                mediafile_mtime, rel=1e-4
+            )
 
     def test_reimported_album_skipped(self):
         # Import and record the original added dates
@@ -119,22 +117,21 @@ class ImportAddedTest(PluginMixin, ImportTestCase):
         self.importer.run()
         # Verify the reimported items
         album = self.lib.albums().get()
-        self.assertEqualTimes(album.added, album_added_before)
+        assert album.added == pytest.approx(album_added_before, rel=1e-4)
         items_added_after = {item.path: item.added for item in album.items()}
         for item_path, added_after in items_added_after.items():
-            self.assertEqualTimes(
-                items_added_before[item_path],
-                added_after,
-                "reimport modified Item.added for "
-                + displayable_path(item_path),
-            )
+            assert items_added_before[item_path] == pytest.approx(
+                added_after, rel=1e-4
+            ), "reimport modified Item.added for " + displayable_path(item_path)
 
     def test_import_singletons_with_added_dates(self):
         self.config["import"]["singletons"] = True
         self.importer.run()
         for item in self.lib.items():
             mfile = self.find_media_file(item)
-            self.assertEqualTimes(item.added, os.path.getmtime(mfile.path))
+            assert item.added == pytest.approx(
+                os.path.getmtime(mfile.path), rel=1e-4
+            )
 
     def test_import_singletons_with_preserved_mtimes(self):
         self.config["import"]["singletons"] = True
@@ -142,9 +139,11 @@ class ImportAddedTest(PluginMixin, ImportTestCase):
         self.importer.run()
         for item in self.lib.items():
             mediafile_mtime = os.path.getmtime(self.find_media_file(item).path)
-            self.assertEqualTimes(item.added, mediafile_mtime)
-            self.assertEqualTimes(item.mtime, mediafile_mtime)
-            self.assertEqualTimes(os.path.getmtime(item.path), mediafile_mtime)
+            assert item.added == pytest.approx(mediafile_mtime, rel=1e-4)
+            assert item.mtime == pytest.approx(mediafile_mtime, rel=1e-4)
+            assert os.path.getmtime(item.path) == pytest.approx(
+                mediafile_mtime, rel=1e-4
+            )
 
     def test_reimported_singletons_skipped(self):
         self.config["import"]["singletons"] = True
@@ -161,9 +160,6 @@ class ImportAddedTest(PluginMixin, ImportTestCase):
         # Verify the reimported items
         items_added_after = {item.path: item.added for item in self.lib.items()}
         for item_path, added_after in items_added_after.items():
-            self.assertEqualTimes(
-                items_added_before[item_path],
-                added_after,
-                "reimport modified Item.added for "
-                + displayable_path(item_path),
-            )
+            assert items_added_before[item_path] == pytest.approx(
+                added_after, rel=1e-4
+            ), "reimport modified Item.added for " + displayable_path(item_path)
