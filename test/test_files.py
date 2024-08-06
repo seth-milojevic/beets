@@ -681,12 +681,9 @@ class UniquePathTest(BeetsTestCase):
 
 
 class MkDirAllTest(BeetsTestCase):
-    def test_parent_exists(self):
-        path = os.path.join(self.temp_dir, b"foo", b"bar", b"baz", b"qux.mp3")
-        util.mkdirall(path)
-        self.assertIsDir(os.path.join(self.temp_dir, b"foo", b"bar", b"baz"))
-
-    def test_child_does_not_exist(self):
-        path = os.path.join(self.temp_dir, b"foo", b"bar", b"baz", b"qux.mp3")
-        util.mkdirall(path)
-        assert not Path(os.fsdecode(path)).exists()
+    def test_mkdirall(self):
+        child = Path("foo") / "bar" / "baz" / "quz.mp3"
+        util.mkdirall(child)
+        assert not child.exists()
+        assert child.parent.exists()
+        assert child.parent.is_dir()

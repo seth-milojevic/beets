@@ -522,7 +522,6 @@ class ImportTest(ImportTestCase):
         assert self.lib.items().get() is None
 
     def test_skip_non_album_dirs(self):
-        self.assertIsDir(os.path.join(self.import_dir, b"album"))
         self.touch(b"cruft", dir=self.import_dir)
         self.importer.add_choice(importer.action.APPLY)
         self.importer.run()
