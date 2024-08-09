@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import sys
 import unittest
+from functools import cached_property
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -878,6 +879,10 @@ class ConfigTest(TestPluginTestCase):
         os.chdir(syspath(self._orig_cwd))
         super().tearDown()
 
+    @cached_property
+    def beetsdir_path(self) -> Path:
+        return Path(os.environ["BEETSDIR"])
+
     def _make_test_cmd(self):
         test_cmd = ui.Subcommand("test", help="test")
 
@@ -1019,14 +1024,10 @@ class ConfigTest(TestPluginTestCase):
             file.write("statefile: state")
 
         self.run_command("--config", cli_config_path, "test", lib=None)
-        self.assert_equal_path(
-            util.bytestring_path(config["library"].as_filename()),
-            os.path.join(self.user_config_dir, b"beets.db"),
-        )
-        self.assert_equal_path(
-            util.bytestring_path(config["statefile"].as_filename()),
-            os.path.join(self.user_config_dir, b"state"),
-        )
+
+        config_path = Path(os.fsdecode(self.user_config_dir))
+        assert config["library"].as_path() == config_path / "beets.db"
+        assert config["statefile"].as_path() == config_path / "state"
 
     def test_cli_config_paths_resolve_relative_to_beetsdir(self):
         os.environ["BEETSDIR"] = os.fsdecode(self.beetsdir)
@@ -1037,22 +1038,14 @@ class ConfigTest(TestPluginTestCase):
             file.write("statefile: state")
 
         self.run_command("--config", cli_config_path, "test", lib=None)
-        self.assert_equal_path(
-            util.bytestring_path(config["library"].as_filename()),
-            os.path.join(self.beetsdir, b"beets.db"),
-        )
-        self.assert_equal_path(
-            util.bytestring_path(config["statefile"].as_filename()),
-            os.path.join(self.beetsdir, b"state"),
-        )
+        assert config["library"].as_path() == self.beetsdir_path / "beets.db"
+        assert config["statefile"].as_path() == self.beetsdir_path / "state"
 
     def test_command_line_option_relative_to_working_dir(self):
         config.read()
         os.chdir(syspath(self.temp_dir))
         self.run_command("--library", "foo.db", "test", lib=None)
-        self.assert_equal_path(
-            config["library"].as_filename(), os.path.join(os.getcwd(), "foo.db")
-        )
+        assert config["library"].as_path() == Path.cwd() / "foo.db"
 
     def test_cli_config_file_loads_plugin_commands(self):
         cli_config_path = os.path.join(self.temp_dir, b"config.yaml")
@@ -1094,13 +1087,9 @@ class ConfigTest(TestPluginTestCase):
         os.environ["BEETSDIR"] = os.fsdecode(self.beetsdir)
 
         config.read()
-        self.assert_equal_path(
-            util.bytestring_path(config["library"].as_filename()),
-            os.path.join(self.beetsdir, b"library.db"),
-        )
-        self.assert_equal_path(
-            util.bytestring_path(config["statefile"].as_filename()),
-            os.path.join(self.beetsdir, b"state.pickle"),
+        assert config["library"].as_path() == self.beetsdir_path / "library.db"
+        assert (
+            config["statefile"].as_path() == self.beetsdir_path / "state.pickle"
         )
 
     def test_beetsdir_config_paths_resolve_relative_to_beetsdir(self):
@@ -1112,14 +1101,8 @@ class ConfigTest(TestPluginTestCase):
             file.write("statefile: state")
 
         config.read()
-        self.assert_equal_path(
-            util.bytestring_path(config["library"].as_filename()),
-            os.path.join(self.beetsdir, b"beets.db"),
-        )
-        self.assert_equal_path(
-            util.bytestring_path(config["statefile"].as_filename()),
-            os.path.join(self.beetsdir, b"state"),
-        )
+        assert config["library"].as_path() == self.beetsdir_path / "beets.db"
+        assert config["statefile"].as_path() == self.beetsdir_path / "state"
 
 
 class ShowModelChangeTest(BeetsTestCase):
