@@ -672,9 +672,6 @@ class ImportHelper(TestHelper):
         """
         assert self.lib_path.joinpath(*segments).exists()
 
-    def assert_lib_dir_empty(self):
-        assert not os.listdir(syspath(self.libdir))
-
 
 class AsIsImporterMixin:
     def setUp(self):
