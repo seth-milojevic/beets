@@ -176,7 +176,73 @@ NEEDS_REFLINK = unittest.skipUnless(
 )
 
 
-class TestHelper(ConfigMixin):
+class LibMixin:
+    # Library fixtures methods
+
+    def create_item(self, **values):
+        """Return an `Item` instance with sensible default values.
+
+        The item receives its attributes from `**values` paratmeter. The
+        `title`, `artist`, `album`, `track`, `format` and `path`
+        attributes have defaults if they are not given as parameters.
+        The `title` attribute is formatted with a running item count to
+        prevent duplicates. The default for the `path` attribute
+        respects the `format` value.
+
+        The item is attached to the database from `self.lib`.
+        """
+        item_count = self._get_item_count()
+        values_ = {
+            "title": "t\u00eftle {0}",
+            "artist": "the \u00e4rtist",
+            "album": "the \u00e4lbum",
+            "track": item_count,
+            "format": "MP3",
+        }
+        values_.update(values)
+        values_["title"] = values_["title"].format(item_count)
+        values_["db"] = self.lib
+        item = Item(**values_)
+        if "path" not in values:
+            item["path"] = "audio." + item["format"].lower()
+        # mtime needs to be set last since other assignments reset it.
+        item.mtime = 12345
+        return item
+
+    def add_item(self, **values):
+        """Add an item to the library and return it.
+
+        Creates the item by passing the parameters to `create_item()`.
+
+        If `path` is not set in `values` it is set to `item.destination()`.
+        """
+        # When specifying a path, store it normalized (as beets does
+        # ordinarily).
+        if "path" in values:
+            values["path"] = util.normpath(values["path"])
+
+        item = self.create_item(**values)
+        item.add(self.lib)
+
+        # Ensure every item has a path.
+        if "path" not in values:
+            item["path"] = item.destination()
+            item.store()
+
+        return item
+
+    def add_album(self, **values):
+        item = self.add_item(**values)
+        return self.lib.add_album([item])
+
+    def _get_item_count(self):
+        if not hasattr(self, "__item_count"):
+            count = 0
+        self.__item_count = count + 1
+        return count
+
+
+class TestHelper(LibMixin, ConfigMixin):
     """Helper mixin for high-level cli and plugin tests.
 
     This mixin provides methods to isolate beets' global state provide
@@ -249,60 +315,6 @@ class TestHelper(ConfigMixin):
         self.lib._close()
         self.remove_temp_dir()
 
-    # Library fixtures methods
-
-    def create_item(self, **values):
-        """Return an `Item` instance with sensible default values.
-
-        The item receives its attributes from `**values` paratmeter. The
-        `title`, `artist`, `album`, `track`, `format` and `path`
-        attributes have defaults if they are not given as parameters.
-        The `title` attribute is formatted with a running item count to
-        prevent duplicates. The default for the `path` attribute
-        respects the `format` value.
-
-        The item is attached to the database from `self.lib`.
-        """
-        item_count = self._get_item_count()
-        values_ = {
-            "title": "t\u00eftle {0}",
-            "artist": "the \u00e4rtist",
-            "album": "the \u00e4lbum",
-            "track": item_count,
-            "format": "MP3",
-        }
-        values_.update(values)
-        values_["title"] = values_["title"].format(item_count)
-        values_["db"] = self.lib
-        item = Item(**values_)
-        if "path" not in values:
-            item["path"] = "audio." + item["format"].lower()
-        # mtime needs to be set last since other assignments reset it.
-        item.mtime = 12345
-        return item
-
-    def add_item(self, **values):
-        """Add an item to the library and return it.
-
-        Creates the item by passing the parameters to `create_item()`.
-
-        If `path` is not set in `values` it is set to `item.destination()`.
-        """
-        # When specifying a path, store it normalized (as beets does
-        # ordinarily).
-        if "path" in values:
-            values["path"] = util.normpath(values["path"])
-
-        item = self.create_item(**values)
-        item.add(self.lib)
-
-        # Ensure every item has a path.
-        if "path" not in values:
-            item["path"] = item.destination()
-            item.store()
-
-        return item
-
     def add_item_fixture(self, **values):
         """Add an item with an actual audio file to the library."""
         item = self.create_item(**values)
@@ -314,10 +326,6 @@ class TestHelper(ConfigMixin):
         item.move(operation=MoveOperation.COPY)
         item.store()
         return item
-
-    def add_album(self, **values):
-        item = self.add_item(**values)
-        return self.lib.add_album([item])
 
     def add_item_fixtures(self, ext="mp3", count=1):
         """Add a number of items with files to the database."""
@@ -388,12 +396,6 @@ class TestHelper(ConfigMixin):
             mediafile.save()
 
         return path
-
-    def _get_item_count(self):
-        if not hasattr(self, "__item_count"):
-            count = 0
-        self.__item_count = count + 1
-        return count
 
     # Running beets commands
 

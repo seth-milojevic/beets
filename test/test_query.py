@@ -17,7 +17,6 @@
 import os
 import sys
 import unittest
-from contextlib import contextmanager
 from functools import partial
 
 import pytest
@@ -32,20 +31,12 @@ from beets.dbcore.query import (
 )
 from beets.library import Item
 from beets.test import _common
-from beets.test.helper import BeetsTestCase, ItemInDBTestCase
+from beets.test.helper import BeetsTestCase, ItemInDBTestCase, LibMixin
 from beets.util import syspath
 
 # Because the absolute path begins with something like C:, we
 # can't disambiguate it from an ordinary query.
 WIN32_NO_IMPLICIT_PATHS = "Implicit paths are not supported on Windows"
-
-
-class AssertsMixin:
-    def assert_items_matched(self, results, titles):
-        assert {i.title for i in results} == set(titles)
-
-    def assert_albums_matched(self, results, albums):
-        assert {a.album for a in results} == set(albums)
 
 
 class AnyFieldQueryTest(ItemInDBTestCase):
@@ -84,7 +75,7 @@ class AnyFieldQueryTest(ItemInDBTestCase):
 
 # A test case class providing a library with some dummy data and some
 # assertions involving that data.
-class DummyDataTestCase(BeetsTestCase, AssertsMixin):
+class DummyDataTestCase(BeetsTestCase):
     def setUp(self):
         super().setUp()
         items = [_common.item() for _ in range(3)]
@@ -109,248 +100,73 @@ class DummyDataTestCase(BeetsTestCase, AssertsMixin):
         items[2].year = 2003
         items[2].comp = False
         items[2].genre = "Hard Rock"
+        items[2].comments = "caf\xe9"
         for item in items:
             self.lib.add(item)
         self.album = self.lib.add_album(items[:2])
+        self.album.albumflex = "foo"
+        self.album.store()
 
-    def assert_items_matched_all(self, results):
-        self.assert_items_matched(
-            results,
-            [
-                "foo bar",
-                "baz qux",
-                "beets 4 eva",
-            ],
-        )
+
+@pytest.fixture(scope="class")
+def lib():
+    test_case = DummyDataTestCase()
+    test_case.setUp()
+    return test_case.lib
+
+
+class TestGet:
+    @pytest.mark.parametrize(
+        "q, expected_titles",
+        [
+            ("", ["foo bar", "baz qux", "beets 4 eva"]),
+            (None, ["foo bar", "baz qux", "beets 4 eva"]),
+            ("comments:caf\xe9", ["beets 4 eva"]),
+            ("title:qux", ["baz qux"]),
+            ("genre:=rock", ["foo bar"]),
+            ("genre:=Rock", ["baz qux"]),
+            ('genre:="Hard Rock"', ["beets 4 eva"]),
+            ('genre:=~"hard rock"', ["beets 4 eva"]),
+            ("artist::t.+r", ["beets 4 eva"]),
+            ("three", ["beets 4 eva"]),
+            ("=rock", ["foo bar"]),
+            ('=~"hard rock"', ["beets 4 eva"]),
+            (":x$", ["baz qux"]),
+            ("popebear", []),
+            ("pope:bear", []),
+            ('genre:="hard rock"', []),
+            ("oNE", ["foo bar"]),
+            (":oNE", []),
+            (":one", ["foo bar"]),
+            ("artist:thrEE", ["beets 4 eva"]),
+            ("artists::eleven", ["foo bar"]),
+            ("artists::one", ["foo bar", "beets 4 eva"]),
+            ("ArTiST:three", ["beets 4 eva"]),
+            ("genre:=~rock", ["foo bar", "baz qux"]),
+            ("baz", ["foo bar", "baz qux"]),
+            (":z$", ["foo bar", "baz qux"]),
+            ("title:baz", ["baz qux"]),
+            ("title::baz", ["baz qux"]),
+            ("qux baz", ["baz qux"]),
+            (":baz :qux", ["baz qux"]),
+            (":baz qux", ["baz qux"]),
+            ("year:2001", ["foo bar"]),
+            ("year:2000..2002", ["foo bar", "baz qux"]),
+            ("singleton:true", ["beets 4 eva"]),
+            ("singleton:1", ["beets 4 eva"]),
+            ("singleton:false", ["foo bar", "baz qux"]),
+            ("singleton:0", ["foo bar", "baz qux"]),
+            ("comp:true", ["foo bar", "baz qux"]),
+            ("comp:false", ["beets 4 eva"]),
+            ("xyzzy:nonsense", []),
+            ("albumflex:foo", ["foo bar", "baz qux"]),
+        ],
+    )
+    def test_get_query(self, lib, q, expected_titles):
+        assert {i.title for i in lib.items(q)} == set(expected_titles)
 
 
 class GetTest(DummyDataTestCase):
-    def test_get_empty(self):
-        q = ""
-        results = self.lib.items(q)
-        self.assert_items_matched_all(results)
-
-    def test_get_none(self):
-        q = None
-        results = self.lib.items(q)
-        self.assert_items_matched_all(results)
-
-    def test_get_one_keyed_term(self):
-        q = "title:qux"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["baz qux"])
-
-    def test_get_one_keyed_exact(self):
-        q = "genre:=rock"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["foo bar"])
-        q = "genre:=Rock"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["baz qux"])
-        q = 'genre:="Hard Rock"'
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["beets 4 eva"])
-
-    def test_get_one_keyed_exact_nocase(self):
-        q = 'genre:=~"hard rock"'
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["beets 4 eva"])
-
-    def test_get_one_keyed_regexp(self):
-        q = "artist::t.+r"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["beets 4 eva"])
-
-    def test_get_one_unkeyed_term(self):
-        q = "three"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["beets 4 eva"])
-
-    def test_get_one_unkeyed_exact(self):
-        q = "=rock"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["foo bar"])
-
-    def test_get_one_unkeyed_exact_nocase(self):
-        q = '=~"hard rock"'
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["beets 4 eva"])
-
-    def test_get_one_unkeyed_regexp(self):
-        q = ":x$"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["baz qux"])
-
-    def test_get_no_matches(self):
-        q = "popebear"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, [])
-
-    def test_invalid_key(self):
-        q = "pope:bear"
-        results = self.lib.items(q)
-        # Matches nothing since the flexattr is not present on the
-        # objects.
-        self.assert_items_matched(results, [])
-
-    def test_get_no_matches_exact(self):
-        q = 'genre:="hard rock"'
-        results = self.lib.items(q)
-        self.assert_items_matched(results, [])
-
-    def test_term_case_insensitive(self):
-        q = "oNE"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["foo bar"])
-
-    def test_regexp_case_sensitive(self):
-        q = ":oNE"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, [])
-        q = ":one"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["foo bar"])
-
-    def test_term_case_insensitive_with_key(self):
-        q = "artist:thrEE"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["beets 4 eva"])
-
-    def test_term_case_regex_with_multi_key_matches(self):
-        q = "artists::eleven"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["foo bar"])
-
-    def test_term_case_regex_with_multi_key_matches_multiple_columns(self):
-        q = "artists::one"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["foo bar", "beets 4 eva"])
-
-    def test_key_case_insensitive(self):
-        q = "ArTiST:three"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["beets 4 eva"])
-
-    def test_keyed_matches_exact_nocase(self):
-        q = "genre:=~rock"
-        results = self.lib.items(q)
-        self.assert_items_matched(
-            results,
-            [
-                "foo bar",
-                "baz qux",
-            ],
-        )
-
-    def test_unkeyed_term_matches_multiple_columns(self):
-        q = "baz"
-        results = self.lib.items(q)
-        self.assert_items_matched(
-            results,
-            [
-                "foo bar",
-                "baz qux",
-            ],
-        )
-
-    def test_unkeyed_regexp_matches_multiple_columns(self):
-        q = ":z$"
-        results = self.lib.items(q)
-        self.assert_items_matched(
-            results,
-            [
-                "foo bar",
-                "baz qux",
-            ],
-        )
-
-    def test_keyed_term_matches_only_one_column(self):
-        q = "title:baz"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["baz qux"])
-
-    def test_keyed_regexp_matches_only_one_column(self):
-        q = "title::baz"
-        results = self.lib.items(q)
-        self.assert_items_matched(
-            results,
-            [
-                "baz qux",
-            ],
-        )
-
-    def test_multiple_terms_narrow_search(self):
-        q = "qux baz"
-        results = self.lib.items(q)
-        self.assert_items_matched(
-            results,
-            [
-                "baz qux",
-            ],
-        )
-
-    def test_multiple_regexps_narrow_search(self):
-        q = ":baz :qux"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["baz qux"])
-
-    def test_mixed_terms_regexps_narrow_search(self):
-        q = ":baz qux"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["baz qux"])
-
-    def test_single_year(self):
-        q = "year:2001"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["foo bar"])
-
-    def test_year_range(self):
-        q = "year:2000..2002"
-        results = self.lib.items(q)
-        self.assert_items_matched(
-            results,
-            [
-                "foo bar",
-                "baz qux",
-            ],
-        )
-
-    def test_singleton_true(self):
-        q = "singleton:true"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["beets 4 eva"])
-
-    def test_singleton_1(self):
-        q = "singleton:1"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["beets 4 eva"])
-
-    def test_singleton_false(self):
-        q = "singleton:false"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["foo bar", "baz qux"])
-
-    def test_singleton_0(self):
-        q = "singleton:0"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["foo bar", "baz qux"])
-
-    def test_compilation_true(self):
-        q = "comp:true"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["foo bar", "baz qux"])
-
-    def test_compilation_false(self):
-        q = "comp:false"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["beets 4 eva"])
-
-    def test_unknown_field_name_no_results(self):
-        q = "xyzzy:nonsense"
-        results = self.lib.items(q)
-        titles = [i.title for i in results]
-        assert titles == []
-
     def test_unknown_field_name_no_results_in_album_query(self):
         q = "xyzzy:nonsense"
         results = self.lib.albums(q)
@@ -363,15 +179,6 @@ class GetTest(DummyDataTestCase):
         names = [a.album for a in results]
         assert names == []
 
-    def test_unicode_query(self):
-        item = self.lib.items().get()
-        item.title = "caf\xe9"
-        item.store()
-
-        q = "title:caf\xe9"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["caf\xe9"])
-
     def test_numeric_search_positive(self):
         q = dbcore.query.NumericQuery("year", "2001")
         results = self.lib.items(q)
@@ -381,14 +188,6 @@ class GetTest(DummyDataTestCase):
         q = dbcore.query.NumericQuery("year", "1999")
         results = self.lib.items(q)
         assert not results
-
-    def test_album_field_fallback(self):
-        self.album["albumflex"] = "foo"
-        self.album.store()
-
-        q = "albumflex:foo"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["foo bar", "baz qux"])
 
     def test_invalid_query(self):
         with pytest.raises(InvalidQueryArgumentValueError, match="not an int"):
@@ -468,7 +267,113 @@ class MatchTest(BeetsTestCase):
         assert q3 != q4
 
 
-class PathQueryTest(ItemInDBTestCase, AssertsMixin):
+class TestPathQuery(LibMixin):
+    @pytest.fixture(autouse=True, scope="class", name="lib")
+    def fixture_lib(self, lib):
+        # This is the item we'll try to match.
+        self.lib = lib
+        i = _common.item(lib)
+        i.path = util.normpath("/a/b/c.mp3")
+        i.title = "path item"
+        i.album = "path album"
+        i.store()
+        lib.add_album([i])
+
+        # A second item for testing exclusion.
+        i2 = _common.item()
+        i2.path = util.normpath("/x/y/z.mp3")
+        i2.title = "another item"
+        i2.album = "another album"
+        lib.add(i2)
+        lib.add_album([i2])
+
+        self.add_album(
+            path=b"/c/_/title.mp3",
+            title="with underscore",
+            album="album with underscore",
+        )
+        self.add_album(
+            path=b"/c/%/title.mp3",
+            title="with percent",
+            album="album with percent",
+        )
+        self.add_album(
+            path=rb"/c/\x/title.mp3",
+            title="with backslash",
+            album="album with backslash",
+        )
+        self.add_album(path=b"/A/B/C2.mp3", title="caps path")
+
+        return lib
+
+    @pytest.fixture
+    def _force_implicit_query_detection(self):
+        # Unadorned path queries with path separators in them are considered
+        # path queries only when the path in question actually exists. So we
+        # mock the existence check to return true.
+        beets.library.PathQuery.force_implicit_query_detection = True
+        yield
+        beets.library.PathQuery.force_implicit_query_detection = False
+
+    # @pytest.mark.usefixtures("_force_implicit_query_detection")
+    @pytest.mark.parametrize(
+        "q, expected_titles, expected_albums",
+        [
+            ("path:/a/b/c.mp3", ["path item"], ["path album"]),
+            ("path:/a", ["path item"], ["path album"]),
+            ("path:/a/", ["path item"], ["path album"]),
+            ("path:/xyzzy/", [], []),
+            ("path:/b/", [], []),
+            ("path:/x/../a/b", ["path item"], ["path album"]),
+            ("/a/b , /a/b", [], []),
+            ("path::c\\.mp3$", ["path item"], ["path album"]),
+            ("path::b", ["path item"], ["path album"]),
+            ("path:/c/_", ["with underscore"], ["album with underscore"]),
+            ("path:/c/%", ["with percent"], ["album with percent"]),
+            ("path:/c/\\\\x", ["with backslash"], ["album with backslash"]),
+        ],
+    )
+    def test_path_query(self, lib, q, expected_titles, expected_albums):
+        assert {i.album for i in lib.albums(q)} == set(expected_albums)
+        assert {i.title for i in lib.items(q)} == set(expected_titles)
+
+    @pytest.mark.skipif(sys.platform == "win32", reason=WIN32_NO_IMPLICIT_PATHS)
+    @pytest.mark.usefixtures("_force_implicit_query_detection")
+    @pytest.mark.parametrize(
+        "q, expected_titles, expected_albums",
+        [
+            ("path:/a/b", ["path item"], ["path album"]),
+            ("c.mp3", [], []),
+            ("title:/a/b", [], []),
+        ],
+    )
+    def test_implicit_path_query(
+        self, lib, q, expected_titles, expected_albums
+    ):
+        assert {i.title for i in lib.items(q)} == set(expected_titles)
+        assert {i.album for i in lib.albums(q)} == set(expected_albums)
+
+    # FIXME: Also create a variant of this test for windows, which tests
+    # both os.sep and os.altsep
+    @pytest.mark.skipif(sys.platform == "win32", reason=WIN32_NO_IMPLICIT_PATHS)
+    @pytest.mark.usefixtures("_force_implicit_query_detection")
+    @pytest.mark.parametrize(
+        "q, is_path_query",
+        [
+            ("/foo/bar", True),
+            ("foo/bar", True),
+            ("foo/", True),
+            ("foo", False),
+            ("foo/:bar", True),
+            ("foo:bar/", False),
+            ("foo:/bar", False),
+        ],
+    )
+    def test_path_sep_detection(self, q, is_path_query):
+        assert beets.library.PathQuery.is_path_query(q) == is_path_query
+
+
+class PathQueryTest(ItemInDBTestCase):
     def setUp(self):
         super().setUp()
 
@@ -487,176 +392,16 @@ class PathQueryTest(ItemInDBTestCase, AssertsMixin):
         self.lib.add(i2)
         self.lib.add_album([i2])
 
-    @contextmanager
-    def force_implicit_query_detection(self):
-        # Unadorned path queries with path separators in them are considered
-        # path queries only when the path in question actually exists. So we
-        # mock the existence check to return true.
-        beets.library.PathQuery.force_implicit_query_detection = True
-        yield
-        beets.library.PathQuery.force_implicit_query_detection = False
-
-    def test_path_exact_match(self):
-        q = "path:/a/b/c.mp3"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["path item"])
-
-        results = self.lib.albums(q)
-        self.assert_albums_matched(results, ["path album"])
-
-    # FIXME: fails on windows
-    @unittest.skipIf(sys.platform == "win32", "win32")
-    def test_parent_directory_no_slash(self):
-        q = "path:/a"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["path item"])
-
-        results = self.lib.albums(q)
-        self.assert_albums_matched(results, ["path album"])
-
-    # FIXME: fails on windows
-    @unittest.skipIf(sys.platform == "win32", "win32")
-    def test_parent_directory_with_slash(self):
-        q = "path:/a/"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["path item"])
-
-        results = self.lib.albums(q)
-        self.assert_albums_matched(results, ["path album"])
-
-    def test_no_match(self):
-        q = "path:/xyzzy/"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, [])
-
-        results = self.lib.albums(q)
-        self.assert_albums_matched(results, [])
-
-    def test_fragment_no_match(self):
-        q = "path:/b/"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, [])
-
-        results = self.lib.albums(q)
-        self.assert_albums_matched(results, [])
-
-    def test_nonnorm_path(self):
-        q = "path:/x/../a/b"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["path item"])
-
-        results = self.lib.albums(q)
-        self.assert_albums_matched(results, ["path album"])
-
-    @unittest.skipIf(sys.platform == "win32", WIN32_NO_IMPLICIT_PATHS)
-    def test_slashed_query_matches_path(self):
-        with self.force_implicit_query_detection():
-            q = "/a/b"
-            results = self.lib.items(q)
-            self.assert_items_matched(results, ["path item"])
-
-            results = self.lib.albums(q)
-            self.assert_albums_matched(results, ["path album"])
-
-    @unittest.skipIf(sys.platform == "win32", WIN32_NO_IMPLICIT_PATHS)
-    def test_path_query_in_or_query(self):
-        with self.force_implicit_query_detection():
-            q = "/a/b , /a/b"
-            results = self.lib.items(q)
-            self.assert_items_matched(results, ["path item"])
-
-    def test_non_slashed_does_not_match_path(self):
-        with self.force_implicit_query_detection():
-            q = "c.mp3"
-            results = self.lib.items(q)
-            self.assert_items_matched(results, [])
-
-            results = self.lib.albums(q)
-            self.assert_albums_matched(results, [])
-
-    def test_slashes_in_explicit_field_does_not_match_path(self):
-        with self.force_implicit_query_detection():
-            q = "title:/a/b"
-            results = self.lib.items(q)
-            self.assert_items_matched(results, [])
-
-    def test_path_item_regex(self):
-        q = "path::c\\.mp3$"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["path item"])
-
-        results = self.lib.albums(q)
-        self.assert_albums_matched(results, ["path album"])
-
-    def test_path_album_regex(self):
-        q = "path::b"
-        results = self.lib.albums(q)
-        self.assert_albums_matched(results, ["path album"])
-
-    def test_escape_underscore(self):
-        self.add_album(
-            path=b"/a/_/title.mp3",
-            title="with underscore",
-            album="album with underscore",
-        )
-        q = "path:/a/_"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["with underscore"])
-
-        results = self.lib.albums(q)
-        self.assert_albums_matched(results, ["album with underscore"])
-
-    def test_escape_percent(self):
-        self.add_album(
-            path=b"/a/%/title.mp3",
-            title="with percent",
-            album="album with percent",
-        )
-        q = "path:/a/%"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["with percent"])
-
-        results = self.lib.albums(q)
-        self.assert_albums_matched(results, ["album with percent"])
-
-    def test_escape_backslash(self):
-        self.add_album(
-            path=rb"/a/\x/title.mp3",
-            title="with backslash",
-            album="album with backslash",
-        )
-        q = "path:/a/\\\\x"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["with backslash"])
-
-        results = self.lib.albums(q)
-        self.assert_albums_matched(results, ["album with backslash"])
-
     def test_case_sensitivity(self):
         self.add_album(path=b"/A/B/C2.mp3", title="caps path")
 
         makeq = partial(beets.library.PathQuery, "path", "/A/B")
 
         results = self.lib.items(makeq(case_sensitive=True))
-        self.assert_items_matched(results, ["caps path"])
+        assert {i.title for i in results} == {"caps path"}
 
         results = self.lib.items(makeq(case_sensitive=False))
-        self.assert_items_matched(results, ["path item", "caps path"])
-
-    # FIXME: Also create a variant of this test for windows, which tests
-    # both os.sep and os.altsep
-    @unittest.skipIf(sys.platform == "win32", "win32")
-    def test_path_sep_detection(self):
-        is_path_query = beets.library.PathQuery.is_path_query
-
-        with self.force_implicit_query_detection():
-            assert is_path_query("/foo/bar")
-            assert is_path_query("foo/bar")
-            assert is_path_query("foo/")
-            assert not is_path_query("foo")
-            assert is_path_query("foo/:bar")
-            assert not is_path_query("foo:bar/")
-            assert not is_path_query("foo:/bar")
+        assert {i.title for i in results} == {"path item", "caps path"}
 
     # FIXME: shouldn't this also work on windows?
     @unittest.skipIf(sys.platform == "win32", WIN32_NO_IMPLICIT_PATHS)
@@ -742,7 +487,7 @@ class IntQueryTest(BeetsTestCase):
         assert matched is None
 
 
-class BoolQueryTest(BeetsTestCase, AssertsMixin):
+class BoolQueryTest(BeetsTestCase):
     def setUp(self):
         super().setUp()
         Item._types = {"flexbool": types.Boolean()}
@@ -805,15 +550,13 @@ class DefaultSearchFieldsTest(DummyDataTestCase):
         assert len(albums) == 1
 
     def test_items_matches_title(self):
-        items = self.lib.items("beets")
-        self.assert_items_matched(items, ["beets 4 eva"])
+        assert self.lib.items("beets")
 
     def test_items_does_not_match_year(self):
-        items = self.lib.items("2001")
-        self.assert_items_matched(items, [])
+        assert not self.lib.items("2001")
 
 
-class NoneQueryTest(BeetsTestCase, AssertsMixin):
+class NoneQueryTest(BeetsTestCase):
     def test_match_singletons(self):
         singleton = self.add_item()
         album_item = self.add_album().items().get()
@@ -1017,46 +760,33 @@ class TestNotQuery:
         assert get_results(q) == get_results(not_not_q)
 
 
-class NegationPrefixTest(DummyDataTestCase):
+class TestNegationPrefix:
+    @pytest.fixture(autouse=True, scope="class")
+    def lib(self):
+        test_case = DummyDataTestCase()
+        test_case.setUp()
+        return test_case.lib
+
+    @pytest.mark.parametrize(
+        "q, expected_titles",
+        [
+            ("-artist::t.+r", ["foo bar", "baz qux"]),
+            ("-:x$", ["foo bar", "beets 4 eva"]),
+            ("baz -bar", ["baz qux"]),
+            ("baz -title:bar", ["baz qux"]),
+            ("-qux", ["foo bar", "beets 4 eva"]),
+            ("^qux", ["foo bar", "beets 4 eva"]),
+            ("^title:qux", ["foo bar", "beets 4 eva"]),
+            ("-title:qux", ["foo bar", "beets 4 eva"]),
+        ],
+    )
+    def test_get_query(self, lib, q, expected_titles):
+        actual_titles = {i.title for i in lib.items(q)}
+        assert actual_titles == set(expected_titles)
+
+
+class FastVsSlowTest(DummyDataTestCase):
     """Tests negation prefixes."""
-
-    def test_get_prefixes_keyed(self):
-        """Test both negation prefixes on a keyed query."""
-        q0 = "-title:qux"
-        q1 = "^title:qux"
-        results0 = self.lib.items(q0)
-        results1 = self.lib.items(q1)
-        self.assert_items_matched(results0, ["foo bar", "beets 4 eva"])
-        self.assert_items_matched(results1, ["foo bar", "beets 4 eva"])
-
-    def test_get_prefixes_unkeyed(self):
-        """Test both negation prefixes on an unkeyed query."""
-        q0 = "-qux"
-        q1 = "^qux"
-        results0 = self.lib.items(q0)
-        results1 = self.lib.items(q1)
-        self.assert_items_matched(results0, ["foo bar", "beets 4 eva"])
-        self.assert_items_matched(results1, ["foo bar", "beets 4 eva"])
-
-    def test_get_one_keyed_regexp(self):
-        q = "-artist::t.+r"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["foo bar", "baz qux"])
-
-    def test_get_one_unkeyed_regexp(self):
-        q = "-:x$"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["foo bar", "beets 4 eva"])
-
-    def test_get_multiple_terms(self):
-        q = "baz -bar"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["baz qux"])
-
-    def test_get_mixed_terms(self):
-        q = "baz -title:bar"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["baz qux"])
 
     def test_fast_vs_slow(self):
         """Test that the results are the same regardless of the `fast` flag
@@ -1089,12 +819,11 @@ class NegationPrefixTest(DummyDataTestCase):
                 pass
 
 
-class RelatedQueriesTest(BeetsTestCase, AssertsMixin):
+class TestRelatedQueries:
     """Test album-level queries with track-level filters and vice-versa."""
 
-    def setUp(self):
-        super().setUp()
-
+    @pytest.fixture(scope="class")
+    def lib(self, lib):
         albums = []
         for album_idx in range(1, 3):
             album_name = f"Album{album_idx}"
@@ -1103,27 +832,28 @@ class RelatedQueriesTest(BeetsTestCase, AssertsMixin):
                 item = _common.item()
                 item.album = album_name
                 item.title = f"{album_name} Item{item_idx}"
-                self.lib.add(item)
+                lib.add(item)
                 album_items.append(item)
-            album = self.lib.add_album(album_items)
+            album = lib.add_album(album_items)
             album.artpath = f"{album_name} Artpath"
             album.catalognum = "ABC"
             album.store()
             albums.append(album)
 
-        self.album, self.another_album = albums
+        return lib
 
-    def test_get_albums_filter_by_track_field(self):
-        q = "title:Album1"
-        results = self.lib.albums(q)
-        self.assert_albums_matched(results, ["Album1"])
-
-    def test_get_items_filter_by_album_field(self):
-        q = "artpath::Album1"
-        results = self.lib.items(q)
-        self.assert_items_matched(results, ["Album1 Item1", "Album1 Item2"])
-
-    def test_filter_by_common_field(self):
-        q = "catalognum:ABC Album1"
-        results = self.lib.albums(q)
-        self.assert_albums_matched(results, ["Album1"])
+    @pytest.mark.parametrize(
+        "q, expected_titles, expected_albums",
+        [
+            ("title:Album1", ["Album1 Item1", "Album1 Item2"], ["Album1"]),
+            ("artpath::Album1", ["Album1 Item1", "Album1 Item2"], ["Album1"]),
+            (
+                "catalognum:ABC Album1",
+                ["Album1 Item1", "Album1 Item2"],
+                ["Album1"],
+            ),
+        ],
+    )
+    def test_path_query(self, lib, q, expected_titles, expected_albums):
+        assert {i.album for i in lib.albums(q)} == set(expected_albums)
+        assert {i.title for i in lib.items(q)} == set(expected_titles)
