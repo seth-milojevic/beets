@@ -244,15 +244,6 @@ class TestPathQuery(LibMixin):
 
         return lib
 
-    @pytest.fixture
-    def _force_implicit_query_detection(self):
-        # Unadorned path queries with path separators in them are considered
-        # path queries only when the path in question actually exists. So we
-        # mock the existence check to return true.
-        PathQuery.force_implicit_query_detection = True
-        yield
-        PathQuery.force_implicit_query_detection = False
-
     @pytest.mark.parametrize(
         "q, expected_titles, expected_albums",
         [
@@ -275,7 +266,6 @@ class TestPathQuery(LibMixin):
         assert {i.title for i in lib.items(q)} == set(expected_titles)
 
     @pytest.mark.skipif(sys.platform == "win32", reason=WIN32_NO_IMPLICIT_PATHS)
-    @pytest.mark.usefixtures("_force_implicit_query_detection")
     @pytest.mark.parametrize(
         "q, expected_titles, expected_albums",
         [
@@ -285,15 +275,15 @@ class TestPathQuery(LibMixin):
         ],
     )
     def test_implicit_path_query(
-        self, lib, q, expected_titles, expected_albums
+        self, monkeypatch, lib, q, expected_titles, expected_albums
     ):
+        monkeypatch.setattr("os.path.exists", lambda path: True)
         assert {i.title for i in lib.items(q)} == set(expected_titles)
         assert {i.album for i in lib.albums(q)} == set(expected_albums)
 
     # FIXME: Also create a variant of this test for windows, which tests
     # both os.sep and os.altsep
     @pytest.mark.skipif(sys.platform == "win32", reason=WIN32_NO_IMPLICIT_PATHS)
-    @pytest.mark.usefixtures("_force_implicit_query_detection")
     @pytest.mark.parametrize(
         "q, is_path_query",
         [
@@ -306,7 +296,8 @@ class TestPathQuery(LibMixin):
             ("foo:/bar", False),
         ],
     )
-    def test_path_sep_detection(self, q, is_path_query):
+    def test_path_sep_detection(self, monkeypatch, q, is_path_query):
+        monkeypatch.setattr("os.path.exists", lambda path: True)
         assert PathQuery.is_path_query(q) == is_path_query
 
     # FIXME: shouldn't this also work on windows?
@@ -314,9 +305,6 @@ class TestPathQuery(LibMixin):
     def test_detect_absolute_path(self, tmp_path):
         """Test detection of implicit path queries based on whether or
         not the path actually exists, when using an absolute path query.
-
-        Thus, don't use the `force_implicit_query_detection()`
-        contextmanager which would disable the existence check.
         """
         is_path_query = PathQuery.is_path_query
 
@@ -340,9 +328,6 @@ class TestPathQuery(LibMixin):
     def test_detect_relative_path(self, tmp_path, monkeypatch):
         """Test detection of implicit path queries based on whether or
         not the path actually exists, when using a relative path query.
-
-        Thus, don't use the `force_implicit_query_detection()`
-        contextmanager which would disable the existence check.
         """
         is_path_query = PathQuery.is_path_query
 

@@ -78,9 +78,6 @@ class PathQuery(dbcore.FieldQuery[bytes]):
     and case-sensitive otherwise.
     """
 
-    # For tests
-    force_implicit_query_detection = False
-
     def __init__(self, field, pattern, fast=True, case_sensitive=None):
         """Create a path query.
 
@@ -113,8 +110,8 @@ class PathQuery(dbcore.FieldQuery[bytes]):
         # As a directory (prefix).
         self.dir_path = os.path.join(path, b"")
 
-    @classmethod
-    def is_path_query(cls, query_part):
+    @staticmethod
+    def is_path_query(query_part):
         """Try to guess whether a unicode query part is a path query.
 
         Condition: separator precedes colon and the file exists.
@@ -130,8 +127,6 @@ class PathQuery(dbcore.FieldQuery[bytes]):
         ):
             return False
 
-        if cls.force_implicit_query_detection:
-            return True
         return os.path.exists(syspath(normpath(query_part)))
 
     def match(self, item):
