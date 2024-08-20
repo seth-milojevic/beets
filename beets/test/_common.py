@@ -66,10 +66,11 @@ HAVE_SYMLINK = sys.platform != "win32"
 HAVE_HARDLINK = sys.platform != "win32"
 
 
-def item(lib=None):
+def item(lib=None, **kwargs):
     global _item_ident
     _item_ident += 1
-    i = beets.library.Item(
+
+    defaults = dict(
         title="the title",
         artist="the artist",
         albumartist="the album artist",
@@ -105,6 +106,7 @@ def item(lib=None):
         album_id=None,
         mtime=12345,
     )
+    i = beets.library.Item(**{**defaults, **kwargs})
     if lib:
         lib.add(i)
     return i
