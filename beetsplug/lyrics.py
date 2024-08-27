@@ -301,6 +301,10 @@ class LRCLibItem(TypedDict):
 class LRCLib(Backend):
     base_url = "https://lrclib.net/api/search"
 
+    def msg(self, message: str, *args: Any) -> None:
+        """Log a debug message with the class name."""
+        self._log.debug(f"{self.__class__.__name__}: {message}", *args)
+
     @staticmethod
     def get_rank(
         target_duration: float, litem: LRCLibItem
@@ -341,25 +345,23 @@ class LRCLib(Backend):
         }
 
         try:
-            response = requests.get(
-                self.base_url,
-                params=params,
-                timeout=10,
-            )
+            response = requests.get(self.base_url, params=params, timeout=10)
+            response.raise_for_status()
             data: list[LRCLibItem] = response.json()
-        except (requests.RequestException, json.decoder.JSONDecodeError) as exc:
-            self._log.debug("LRCLib API request failed: {0}", exc)
-            return None
+        except requests.JSONDecodeError:
+            self.msg("Could not decode response JSON data")
+        except requests.RequestException as exc:
+            self.msg("Request error: {}", exc)
+        else:
+            if data:
+                item = self.pick_lyrics(length, data)
 
-        if not data:
-            return None
+                if self.config["synced"] and (synced := item["syncedLyrics"]):
+                    return synced
 
-        item = self.pick_lyrics(length, data)
+                return item["plainLyrics"]
 
-        if self.config["synced"] and (synced_lyrics := item["syncedLyrics"]):
-            return synced_lyrics
-
-        return item["plainLyrics"]
+        return None
 
 
 class MusiXmatch(Backend):

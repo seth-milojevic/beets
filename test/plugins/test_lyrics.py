@@ -19,6 +19,7 @@ import os
 import re
 import unittest
 from functools import partial
+from http import HTTPStatus
 from unittest.mock import MagicMock, patch
 
 import confuse
@@ -743,6 +744,31 @@ class TestLRCLibLyrics:
     )
     def test_synced_config_option(self, fetch_lyrics, expected_lyrics):
         assert fetch_lyrics() == expected_lyrics
+
+    @pytest.mark.parametrize(
+        "request_kwargs, expected_log_match",
+        [
+            (
+                {"status_code": HTTPStatus.BAD_GATEWAY},
+                r"^LRCLib: Request error: 502",
+            ),
+            ({"text": "invalid"}, r"^LRCLib: Could not decode.*JSON"),
+        ],
+    )
+    def test_error(
+        self,
+        requests_mock,
+        caplog,
+        fetch_lyrics,
+        request_kwargs,
+        expected_log_match,
+    ):
+        requests_mock.get(lyrics.LRCLib.base_url, **request_kwargs)
+
+        assert fetch_lyrics() is None
+        assert caplog.messages
+        assert (last_log := caplog.messages[-1])
+        assert re.search(expected_log_match, last_log, re.I)
 
 
 class LRCLibIntegrationTest(LyricsAssertions):
