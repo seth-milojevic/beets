@@ -22,10 +22,10 @@ import itertools
 import json
 import os.path
 import re
-import struct
 import unicodedata
 import urllib
 import warnings
+from html import unescape
 from typing import Any
 
 import requests
@@ -109,27 +109,6 @@ epub_tocdup = False
 
 
 # Utilities.
-
-
-def unichar(i):
-    try:
-        return chr(i)
-    except ValueError:
-        return struct.pack("i", i).decode("utf-32")
-
-
-def unescape(text):
-    """Resolve &#xxx; HTML entities (and some others)."""
-    if isinstance(text, bytes):
-        text = text.decode("utf-8", "ignore")
-    out = text.replace("&nbsp;", " ")
-
-    def replchar(m):
-        num = m.group(1)
-        return unichar(int(num))
-
-    out = re.sub("&#(\\d+);", replchar, out)
-    return out
 
 
 def extract_text_between(html, start_marker, end_marker):
@@ -659,6 +638,8 @@ def _scrape_strip_cruft(html, plain_text_out=False):
     html = BREAK_RE.sub("\n", html)  # <br> eats up surrounding '\n'.
     html = re.sub(r"(?s)<(script).*?</\1>", "", html)  # Strip script tags.
     html = re.sub("\u2005", " ", html)  # replace unicode with regular space
+    html = re.sub("<aside .+?</aside>", "", html)  # remove Google Ads tags
+    html = re.sub(r"</?(em|strong)[^>]*>", "", html)  # remove bold / italics
 
     if plain_text_out:  # Strip remaining HTML tags
         html = COMMENT_RE.sub("", html)
@@ -674,10 +655,12 @@ def _scrape_merge_paragraphs(html):
     return re.sub(r"<div .*>\s*</div>", "\n", html)
 
 
-def scrape_lyrics_from_html(html):
+def scrape_lyrics_from_html(html: str | None) -> str | None:
     """Scrape lyrics from a URL. If no lyrics can be found, return None
     instead.
     """
+    if not html:
+        return None
 
     def is_text_notcode(text):
         if not text:
@@ -819,10 +802,7 @@ class Google(Backend):
                     url_link, url_title, title, artist
                 ):
                     continue
-                html = self.fetch_url(url_link)
-                if not html:
-                    continue
-                lyrics = scrape_lyrics_from_html(html)
+                lyrics = scrape_lyrics_from_html(self.fetch_url(url_link))
                 if not lyrics:
                     continue
 
