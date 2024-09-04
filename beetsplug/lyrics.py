@@ -12,9 +12,9 @@
 # The above copyright notice and this permission notice shall be
 # included in all copies or substantial portions of the Software.
 
-"""Fetches, embeds, and displays lyrics.
-"""
+"""Fetches, embeds, and displays lyrics."""
 
+from __future__ import annotations
 
 import difflib
 import errno
@@ -26,8 +26,10 @@ import struct
 import unicodedata
 import urllib
 import warnings
+from typing import Any
 
 import requests
+from typing_extensions import TypedDict
 from unidecode import unidecode
 
 try:
@@ -282,15 +284,60 @@ class Backend:
         raise NotImplementedError()
 
 
-class LRCLib(Backend):
-    base_url = "https://lrclib.net/api/get"
+class LRCLibItem(TypedDict):
+    """Definition of a single lyrics JSON object returned by the LRCLib API."""
 
-    def fetch(self, artist, title, album=None, length=None):
+    id: int
+    name: str
+    trackName: str
+    artistName: str
+    albumName: str
+    duration: float
+    instrumental: bool
+    plainLyrics: str
+    syncedLyrics: str | None
+
+
+class LRCLib(Backend):
+    base_url = "https://lrclib.net/api/search"
+
+    @staticmethod
+    def get_rank(
+        target_duration: float, litem: LRCLibItem
+    ) -> tuple[float, bool]:
+        """Rank the given lyrics item.
+
+        Return a tuple with the following values:
+        1. Difference between item lyrics duration and the item duration in sec
+        2. Boolean telling whether synced lyrics are available.
+        """
+        return (
+            abs(litem["duration"] - target_duration),
+            not litem["syncedLyrics"],
+        )
+
+    @classmethod
+    def pick_lyrics(
+        cls, target_duration: float, data: list[LRCLibItem]
+    ) -> LRCLibItem:
+        """Return best matching lyrics item from the given list.
+
+        Note that the incoming list is guaranteed to be non-empty.
+        """
+        return min(data, key=lambda item: cls.get_rank(target_duration, item))
+
+    def fetch(
+        self,
+        artist: str,
+        title: str,
+        album: str | None = None,
+        length: float = 0.0,
+    ) -> str | None:
+        """Fetch lyrics for the given artist, title, and album."""
         params = {
             "artist_name": artist,
             "track_name": title,
             "album_name": album,
-            "duration": length,
         }
 
         try:
@@ -299,15 +346,20 @@ class LRCLib(Backend):
                 params=params,
                 timeout=10,
             )
-            data = response.json()
+            data: list[LRCLibItem] = response.json()
         except (requests.RequestException, json.decoder.JSONDecodeError) as exc:
             self._log.debug("LRCLib API request failed: {0}", exc)
             return None
 
-        if self.config["synced"]:
-            return data.get("syncedLyrics")
+        if not data:
+            return None
 
-        return data.get("plainLyrics")
+        item = self.pick_lyrics(length, data)
+
+        if self.config["synced"] and (synced_lyrics := item["syncedLyrics"]):
+            return synced_lyrics
+
+        return item["plainLyrics"]
 
 
 class MusiXmatch(Backend):
