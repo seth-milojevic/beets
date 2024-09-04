@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import atexit
 import difflib
 import errno
 import itertools
@@ -24,7 +25,6 @@ import os.path
 import re
 import unicodedata
 import urllib
-import warnings
 from functools import cached_property
 from html import unescape
 from typing import Any, Iterator
@@ -107,6 +107,22 @@ epub_exclude_files = ['search.html']
 epub_tocdepth = 1
 epub_tocdup = False
 """
+
+
+class TimeoutSession(requests.Session):
+    def request(self, *args, **kwargs):
+        kwargs.setdefault("timeout", 10)
+        return super().request(*args, **kwargs)
+
+
+r_session = TimeoutSession()
+r_session.headers.update({"User-Agent": USER_AGENT})
+
+
+@atexit.register
+def close_session():
+    """Close the requests session on shut down."""
+    r_session.close()
 
 
 # Utilities.
@@ -266,20 +282,7 @@ class Backend(metaclass=BackendType):
         is unreachable.
         """
         try:
-            # Disable the InsecureRequestWarning that comes from using
-            # `verify=false`.
-            # https://github.com/kennethreitz/requests/issues/2214
-            # We're not overly worried about the NSA MITMing our lyrics scraper
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                r = requests.get(
-                    url,
-                    verify=False,
-                    headers={
-                        "User-Agent": USER_AGENT,
-                    },
-                    timeout=10,
-                )
+            r = r_session.get(url)
         except requests.RequestException as exc:
             self._log.debug("lyrics request failed: {0}", exc)
             return
@@ -354,7 +357,7 @@ class LRCLib(Backend):
         }
 
         try:
-            response = requests.get(self.base_url, params=params, timeout=10)
+            response = r_session.get(self.base_url, params=params)
             response.raise_for_status()
             data: list[LRCLibItem] = response.json()
         except requests.JSONDecodeError:
@@ -435,10 +438,7 @@ class Genius(Backend):
     def __init__(self, config, log):
         super().__init__(config, log)
         self.api_key = config["genius_api_key"].as_str()
-        self.headers = {
-            "Authorization": "Bearer %s" % self.api_key,
-            "User-Agent": USER_AGENT,
-        }
+        self.headers = {"Authorization": f"Bearer {self.api_key}"}
 
     def fetch(self, artist, title, album=None, length=None):
         """Fetch lyrics from genius.com
@@ -477,18 +477,13 @@ class Genius(Backend):
         search_url = self.base_url + "/search"
         data = {"q": title + " " + artist.lower()}
         try:
-            response = requests.get(
-                search_url,
-                params=data,
-                headers=self.headers,
-                timeout=10,
-            )
+            r = r_session.get(search_url, params=data, headers=self.headers)
         except requests.RequestException as exc:
             self._log.debug("Genius API request failed: {0}", exc)
             return None
 
         try:
-            return response.json()
+            return r.json()
         except ValueError:
             return None
 
@@ -928,13 +923,7 @@ class LyricsPlugin(plugins.BeetsPlugin):
         }
 
         oauth_url = "https://datamarket.accesscontrol.windows.net/v2/OAuth2-13"
-        oauth_token = json.loads(
-            requests.post(
-                oauth_url,
-                data=urllib.parse.urlencode(params),
-                timeout=10,
-            ).content
-        )
+        oauth_token = r_session.post(oauth_url, params=params).json()
         if "access_token" in oauth_token:
             return "Bearer " + oauth_token["access_token"]
         else:
@@ -1153,10 +1142,8 @@ class LyricsPlugin(plugins.BeetsPlugin):
                 "https://api.microsofttranslator.com/v2/Http.svc/"
                 "Translate?text=%s&to=%s" % ("|".join(text_lines), to_lang)
             )
-            r = requests.get(
-                url,
-                headers={"Authorization ": self.bing_auth_token},
-                timeout=10,
+            r = r_session.get(
+                url, headers={"Authorization": self.bing_auth_token}
             )
             if r.status_code != 200:
                 self._log.debug(
