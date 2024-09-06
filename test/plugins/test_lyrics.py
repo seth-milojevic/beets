@@ -14,13 +14,10 @@
 
 """Tests for the 'lyrics' plugin."""
 
-import itertools
 import os
 import re
-import unittest
 from functools import partial
 from http import HTTPStatus
-from unittest.mock import patch
 
 import pytest
 
@@ -43,11 +40,7 @@ skip_ci = pytest.mark.skipif(
 )
 
 
-class LyricsPluginTest(unittest.TestCase):
-    def setUp(self):
-        """Set up configuration."""
-        lyrics.LyricsPlugin()
-
+class TestLyricsUtils:
     def test_search_artist(self):
         item = Item(artist="Alice ft. Bob", title="song")
         assert ("Alice ft. Bob", ["song"]) in lyrics.search_pairs(item)
@@ -158,6 +151,24 @@ class LyricsPluginTest(unittest.TestCase):
     def test_scrape_merge_paragraphs(self):
         text = "one</p>   <p class='myclass'>two</p><p>three"
         assert lyrics._scrape_merge_paragraphs(text) == "one\ntwo\nthree"
+
+    @pytest.mark.parametrize(
+        "text, expected",
+        [
+            ("test", "test"),
+            ("Mørdag", "mordag"),
+            ("l'été c'est fait pour jouer", "l-ete-c-est-fait-pour-jouer"),
+            ("\xe7afe au lait (boisson)", "cafe-au-lait-boisson"),
+            ("Multiple  spaces -- and symbols! -- merged", "multiple-spaces-and-symbols-merged"),  # noqa: E501
+            ("\u200bno-width-space", "no-width-space"),
+            ("El\u002dp", "el-p"),
+            ("\u200bblackbear", "blackbear"),
+            ("\u200d", ""),
+            ("\u2010", ""),
+        ],
+    )  # fmt: skip
+    def test_slug(self, text, expected):
+        assert lyrics.slug(text) == expected
 
 
 @pytest.fixture(scope="module")
@@ -333,10 +344,6 @@ the following form.
     def test_bad_lyrics(self, backend, lyrics):
         assert not backend.is_lyrics(lyrics)
 
-    def test_slugify(self, backend):
-        text = "http://site.com/\xe7afe-au_lait(boisson)"
-        assert backend.slugify(text) == "http://site.com/cafe_au_lait"
-
 
 class TestGeniusLyrics(LyricsPluginBackendMixin):
     @pytest.fixture(scope="class")
@@ -357,52 +364,6 @@ class TestGeniusLyrics(LyricsPluginBackendMixin):
         result = backend.scrape_lyrics(lyrics_html) or ""
 
         assert len(result.splitlines()) == expected_line_count
-
-    @patch.object(lyrics.Genius, "scrape_lyrics")
-    @patch.object(lyrics.Backend, "fetch_text", return_value=True)
-    def test_json(self, mock_fetch_text, mock_scrape, backend):
-        """Ensure we're finding artist matches"""
-        with patch.object(
-            lyrics.Genius,
-            "_search",
-            return_value={
-                "response": {
-                    "hits": [
-                        {
-                            "result": {
-                                "primary_artist": {
-                                    "name": "\u200bblackbear",
-                                },
-                                "url": "blackbear_url",
-                            }
-                        },
-                        {
-                            "result": {
-                                "primary_artist": {"name": "El\u002dp"},
-                                "url": "El-p_url",
-                            }
-                        },
-                    ]
-                }
-            },
-        ) as mock_json:
-            # genius uses zero-width-spaces (\u200B) for lowercase
-            # artists so we make sure we can match those
-            assert backend.fetch("blackbear", "Idfc") is not None
-            mock_fetch_text.assert_called_once_with("blackbear_url")
-            mock_scrape.assert_called_once_with(True)
-
-            # genius uses the hyphen minus (\u002D) as their dash
-            assert backend.fetch("El-p", "Idfc") is not None
-            mock_fetch_text.assert_called_with("El-p_url")
-            mock_scrape.assert_called_with(True)
-
-            # test no matching artist
-            assert backend.fetch("doesntexist", "none") is None
-
-            # test invalid json
-            mock_json.return_value = {"response": {"hits": []}}
-            assert backend.fetch("blackbear", "Idfc") is None
 
 
 class TestTekstowoLyrics(LyricsPluginBackendMixin):
@@ -519,31 +480,3 @@ class TestLRCLibLyrics(LyricsPluginBackendMixin):
     )
     def test_synced_config_option(self, fetch_lyrics, expected_lyrics):
         assert fetch_lyrics() == expected_lyrics
-
-
-class SlugTests(unittest.TestCase):
-    def test_slug(self):
-        # plain ascii passthrough
-        text = "test"
-        assert lyrics.slug(text) == "test"
-
-        # german unicode and capitals
-        text = "Mørdag"
-        assert lyrics.slug(text) == "mordag"
-
-        # more accents and quotes
-        text = "l'été c'est fait pour jouer"
-        assert lyrics.slug(text) == "l-ete-c-est-fait-pour-jouer"
-
-        # accents, parens and spaces
-        text = "\xe7afe au lait (boisson)"
-        assert lyrics.slug(text) == "cafe-au-lait-boisson"
-        text = "Multiple  spaces -- and symbols! -- merged"
-        assert lyrics.slug(text) == "multiple-spaces-and-symbols-merged"
-        text = "\u200bno-width-space"
-        assert lyrics.slug(text) == "no-width-space"
-
-        # variations of dashes should get standardized
-        dashes = ["\u200d", "\u2010"]
-        for dash1, dash2 in itertools.combinations(dashes, 2):
-            assert lyrics.slug(dash1) == lyrics.slug(dash2)

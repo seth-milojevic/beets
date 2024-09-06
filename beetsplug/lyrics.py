@@ -22,12 +22,12 @@ import errno
 import itertools
 import os.path
 import re
-import unicodedata
 import urllib
 from contextlib import contextmanager
 from functools import cached_property
 from html import unescape
 from typing import Any, Iterator
+from urllib.parse import urlparse
 
 import requests
 from typing_extensions import TypedDict
@@ -183,7 +183,7 @@ def search_pairs(item):
     return itertools.product(artists, multi_titles)
 
 
-def slug(text):
+def slug(text: str) -> str:
     """Make a URL-safe, human-readable version of the given text
 
     This will do the following:
@@ -193,10 +193,6 @@ def slug(text):
     3. strip whitespace
     4. replace other non-word characters with dashes
     5. strip extra dashes
-
-    This somewhat duplicates the :func:`Google.slugify` function but
-    slugify is not as generic as this one, which can be reused
-    elsewhere.
     """
     return re.sub(r"\W+", "-", unidecode(text).lower().strip()).strip("-")
 
@@ -666,19 +662,6 @@ class Google(Backend):
             self.debug("Bad triggers detected: {}", bad_triggers_occ)
         return len(bad_triggers_occ) < 2
 
-    def slugify(self, text):
-        """Normalize a string and remove non-alphanumeric characters."""
-        text = re.sub(r"[-'_\s]", "_", text)
-        text = re.sub(r"_+", "_", text).strip("_")
-        pat = r"([^,\(]*)\((.*?)\)"  # Remove content within parentheses
-        text = re.sub(pat, r"\g<1>", text).strip()
-        try:
-            text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore")
-            text = str(re.sub(r"[-\s]+", " ", text.decode("utf-8")))
-        except UnicodeDecodeError:
-            self.debug("Failed to normalize '{}'", text)
-        return text
-
     BY_TRANS = ["by", "par", "de", "von"]
     LYRICS_TRANS = ["lyrics", "paroles", "letras", "liedtexte"]
 
@@ -686,12 +669,10 @@ class Google(Backend):
         """Return True if the URL title makes it a good candidate to be a
         page that contains lyrics of title by artist.
         """
-        title = self.slugify(title.lower())
-        artist = self.slugify(artist.lower())
-        sitename = re.search(
-            "//([^/]+)/.*", self.slugify(url_link.lower())
-        ).group(1)
-        url_title = self.slugify(url_title.lower())
+        title = slug(title)
+        artist = re.escape(slug(artist))
+        sitename = urlparse(url_link).netloc
+        url_title = slug(url_title)
 
         # Check if URL title contains song title (exact match)
         if url_title.find(title) != -1:
@@ -700,14 +681,13 @@ class Google(Backend):
         # or try extracting song title from URL title and check if
         # they are close enough
         tokens = (
-            [by + "_" + artist for by in self.BY_TRANS]
+            [by + "-" + artist for by in self.BY_TRANS]
             + [artist, sitename, sitename.replace("www.", "")]
             + self.LYRICS_TRANS
         )
-        tokens = [re.escape(t) for t in tokens]
         song_title = re.sub("(%s)" % "|".join(tokens), "", url_title)
 
-        song_title = song_title.strip("_|")
+        song_title = song_title.strip("-|")
         typo_ratio = 0.9
         ratio = difflib.SequenceMatcher(None, song_title, title).ratio()
         return ratio >= typo_ratio
