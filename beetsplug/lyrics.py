@@ -233,14 +233,26 @@ else:
 class RequestHandler:
     _log: beets.logging.Logger
 
+    def debug(self, message: str, *args: Any) -> None:
+        """Log a debug message with the class name."""
+        self._log.debug(f"{self.__class__.__name__}: {message}", *args)
+
+    def info(self, message: str, *args: Any) -> None:
+        """Log an info message with the class name."""
+        self._log.info(f"{self.__class__.__name__}: {message}", *args)
+
+    def warn(self, message: str, *args: Any) -> None:
+        """Log warning with the class name."""
+        self._log.warning(f"{self.__class__.__name__}: {message}", *args)
+
     def fetch_text(self, url: str, **kwargs) -> str:
         """Return text / HTML data from the given URL."""
-        self._log.debug("Fetching HTML from {}", url)
+        self.debug("Fetching HTML from {}", url)
         return r_session.get(url, **kwargs).text
 
     def fetch_json(self, url: str, **kwargs):
         """Return JSON data from the given URL."""
-        self._log.debug("Fetching JSON from {}", url)
+        self.debug("Fetching JSON from {}", url)
         return r_session.get(url, **kwargs).json()
 
     @contextmanager
@@ -248,10 +260,9 @@ class RequestHandler:
         try:
             yield
         except requests.JSONDecodeError:
-            self._log.warning("Could not decode response JSON data")
+            self.warn("Could not decode response JSON data")
         except requests.RequestException as exc:
-            self._log.warning("Request error: {}", exc)
-
+            self.warn("Request error: {}", exc)
 
 
 class BackendType(type):
@@ -325,10 +336,6 @@ class LRCLibItem(TypedDict):
 
 class LRCLib(Backend):
     base_url = "https://lrclib.net/api/search"
-
-    def msg(self, message: str, *args: Any) -> None:
-        """Log a debug message with the class name."""
-        self._log.debug(f"{self.__class__.__name__}: {message}", *args)
 
     @staticmethod
     def get_rank(
@@ -407,9 +414,7 @@ class MusiXmatch(Backend):
         if not html:
             return None
         if "We detected that your IP is blocked" in html:
-            self._log.warning(
-                "we are blocked at MusixMatch: url %s failed" % url
-            )
+            self.warn("Failed: Blocked IP address")
             return None
         html_parts = html.split('<p class="mxm-lyrics__content')
         # Sometimes lyrics come in 2 or more parts
@@ -454,9 +459,6 @@ class Genius(Backend):
         then attempt to scrape that url for the lyrics.
         """
         json = self._search(artist, title)
-        if not json:
-            self._log.debug("Genius API request returned invalid JSON")
-            return None
 
         # find a matching artist in the json
         for hit in json["response"]["hits"]:
@@ -468,9 +470,7 @@ class Genius(Backend):
                     return None
                 return self._scrape_lyrics_from_html(html)
 
-        self._log.debug(
-            "Genius failed to find a matching artist for '{0}'", artist
-        )
+        self.debug("Failed to find a matching artist for '{}'", artist)
         return None
 
     def _search(self, artist, title):
@@ -507,7 +507,7 @@ class Genius(Backend):
 
         lyrics_divs = soup.find_all("div", {"data-lyrics-container": True})
         if not lyrics_divs:
-            self._log.debug("Received unusual song page html")
+            self.debug("Received unusual song page html")
             return self._try_extracting_lyrics_from_non_data_lyrics_container(
                 soup
             )
@@ -530,10 +530,10 @@ class Genius(Backend):
                 class_=re.compile("LyricsPlaceholder__Message"),
                 string="This song is an instrumental",
             ):
-                self._log.debug("Detected instrumental")
+                self.debug("Detected instrumental")
                 return "[Instrumental]"
             else:
-                self._log.debug("Couldn't scrape page using known layouts")
+                self.debug("Couldn't scrape page using known layouts")
                 return None
 
         lyrics_div = verse_div.parent
@@ -729,7 +729,7 @@ class Google(Backend):
         bad_triggers_occ = []
         nb_lines = text.count("\n")
         if nb_lines <= 1:
-            self._log.debug("Ignoring too short lyrics '{0}'", text)
+            self.debug("Ignoring too short lyrics '{}'", text)
             return False
         elif nb_lines < 5:
             bad_triggers_occ.append("too_short")
@@ -748,7 +748,7 @@ class Google(Backend):
             )
 
         if bad_triggers_occ:
-            self._log.debug("Bad triggers detected: {0}", bad_triggers_occ)
+            self.debug("Bad triggers detected: {}", bad_triggers_occ)
         return len(bad_triggers_occ) < 2
 
     def slugify(self, text):
@@ -761,7 +761,7 @@ class Google(Backend):
             text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore")
             text = str(re.sub(r"[-\s]+", " ", text.decode("utf-8")))
         except UnicodeDecodeError:
-            self._log.exception("Failing to normalize '{0}'", text)
+            self.debug("Failed to normalize '{}'", text)
         return text
 
     BY_TRANS = ["by", "par", "de", "von"]
@@ -808,7 +808,7 @@ class Google(Backend):
         data = self.fetch_json(url)
         if "error" in data:
             reason = data["error"]["errors"][0]["reason"]
-            self._log.debug("google backend error: {0}", reason)
+            self.debug("Error: {}", reason)
             return None
 
         if "items" in data.keys():
@@ -824,13 +824,13 @@ class Google(Backend):
                     continue
 
                 if self.is_lyrics(lyrics, artist):
-                    self._log.debug("got lyrics from {0}", item["displayLink"])
+                    self.debug("Got lyrics from {}", item["displayLink"])
                     return lyrics
 
         return None
 
 
-class LyricsPlugin(plugins.BeetsPlugin):
+class LyricsPlugin(RequestHandler, plugins.BeetsPlugin):
     @cached_property
     def backends(self) -> dict[str, Backend]:
         user_sources = self.config["sources"].get()
@@ -840,17 +840,17 @@ class LyricsPlugin(plugins.BeetsPlugin):
         if not HAS_BEAUTIFUL_SOUP:
             disabled |= {n for n in chosen if Backend[n].REQUIRES_BS}
             if disabled:
-                self._log.debug(
+                self.debug(
                     "Disabling {} sources: missing beautifulsoup4 module",
                     disabled,
                 )
 
         elif "google" in chosen and not self.config["google_API_key"].get():
-            self._log.debug("Disabling Google source: no API key configured.")
+            self.debug("Disabling Google source: no API key configured.")
             disabled.add("google")
 
         return {
-            s: Backend[s](self.config, self._log)
+            s: Backend[s](self.config, self._log.getChild(s))
             for s in chosen
             if s not in disabled
         }
@@ -899,10 +899,9 @@ class LyricsPlugin(plugins.BeetsPlugin):
         ]
 
         if not HAS_LANGDETECT and self.config["bing_client_secret"].get():
-            self._log.warning(
-                "To use bing translations, you need to "
-                "install the langdetect module. See the "
-                "documentation for further details."
+            self.warn(
+                "To use bing translations, you need to install the langdetect "
+                "module. See the documentation for further details."
             )
 
     @cached_property
@@ -919,7 +918,7 @@ class LyricsPlugin(plugins.BeetsPlugin):
             r = r_session.post(oauth_url, params=params)
             return r.json()["access_token"]
 
-        self._log.warning(
+        self.warn(
             "Could not get Bing Translate API access token. "
             "Check your 'bing_client_secret' password."
         )
@@ -1074,7 +1073,7 @@ class LyricsPlugin(plugins.BeetsPlugin):
         """
         # Skip if the item already has lyrics.
         if not force and item.lyrics:
-            self._log.info("lyrics already present: {0}", item)
+            self.info("Lyrics already present: {}", item)
             return
 
         lyrics = None
@@ -1091,7 +1090,7 @@ class LyricsPlugin(plugins.BeetsPlugin):
         lyrics = "\n\n---\n\n".join([l for l in lyrics if l])
 
         if lyrics:
-            self._log.info("fetched lyrics: {0}", item)
+            self.info("Lyrics found: {}", item)
             if HAS_LANGDETECT and self.config["bing_client_secret"].get():
                 lang_from = langdetect.detect(lyrics)
                 if self.config["bing_lang_to"].get() != lang_from and (
@@ -1102,7 +1101,7 @@ class LyricsPlugin(plugins.BeetsPlugin):
                         lyrics, self.config["bing_lang_to"]
                     )
         else:
-            self._log.info("lyrics not found: {0}", item)
+            self.info("Lyrics not found: {}", item)
             fallback = self.config["fallback"].get()
             if fallback:
                 lyrics = fallback
@@ -1117,12 +1116,12 @@ class LyricsPlugin(plugins.BeetsPlugin):
         """Fetch lyrics, trying each source in turn. Return a string or
         None if no lyrics were found.
         """
-        for name, backend in self.backends.items():
+        self.debug("Fetching lyrics for {} - {}", artist, title)
+        for backend in self.backends.values():
             with backend.handle_request():
                 if lyrics := backend.fetch(
                     artist, title, album=album, length=length
                 ):
-                    self._log.debug("got lyrics from backend: {0}", name)
                     return _scrape_strip_cruft(lyrics, True)
 
     def append_translation(self, text, to_lang):

@@ -246,9 +246,9 @@ class TestLyricsPlugin(LyricsPluginMixin):
         [
             (
                 {"status_code": HTTPStatus.BAD_GATEWAY},
-                r"lyrics: Request error: 502",
+                r"LRCLib: Request error: 502",
             ),
-            ({"text": "invalid"}, r"lyrics: Could not decode.*JSON"),
+            ({"text": "invalid"}, r"LRCLib: Could not decode.*JSON"),
         ],
     )
     def test_error_handling(
@@ -472,7 +472,7 @@ class TestGeniusLyrics(LyricsPluginBackendMixin):
             assert backend.fetch("doesntexist", "none") is None
 
             # test invalid json
-            mock_json.return_value = None
+            mock_json.return_value = {"response": {"hits": []}}
             assert backend.fetch("blackbear", "Idfc") is None
 
 
