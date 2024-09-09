@@ -20,13 +20,14 @@ import re
 import unittest
 from functools import partial
 from http import HTTPStatus
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
+from bs4 import BeautifulSoup, SoupStrainer
 
-from beets import logging
 from beets.library import Item
 from beets.test import _common
+from beets.test.helper import PluginMixin
 from beets.util import bytestring_path
 from beetsplug import lyrics
 
@@ -35,12 +36,6 @@ PHRASE_BY_TITLE = {
     "Jazz'n'blues": "as i check my balance i kiss the screen",
     "Beets song": "via plugins, beets becomes a panacea",
 }
-
-log = logging.getLogger("beets.test_lyrics")
-raw_backend = lyrics.Backend({}, log)
-google = lyrics.Google(MagicMock(), log)
-genius = lyrics.Genius(MagicMock(), log)
-tekstowo = lyrics.Tekstowo(MagicMock(), log)
 
 _p = pytest.param
 
@@ -159,19 +154,6 @@ class LyricsPluginTest(unittest.TestCase):
                   if the beat aint crackin"""
         assert lyrics.remove_credits(text) == text
 
-    def test_is_lyrics(self):
-        texts = ["LyricsMania.com - Copyright (c) 2013 - All Rights Reserved"]
-        texts += [
-            """All material found on this site is property\n
-                     of mywickedsongtext brand"""
-        ]
-        for t in texts:
-            assert not google.is_lyrics(t)
-
-    def test_slugify(self):
-        text = "http://site.com/\xe7afe-au_lait(boisson)"
-        assert google.slugify(text) == "http://site.com/cafe_au_lait"
-
     def test_scrape_strip_cruft(self):
         text = """<!--lyrics below-->
                   &nbsp;one
@@ -192,15 +174,6 @@ class LyricsPluginTest(unittest.TestCase):
     def test_scrape_merge_paragraphs(self):
         text = "one</p>   <p class='myclass'>two</p><p>three"
         assert lyrics._scrape_merge_paragraphs(text) == "one\ntwo\nthree"
-
-    def test_missing_lyrics(self):
-        lyrics = """
-Lyricsmania staff is working hard for you to add $TITLE lyrics as soon
-as they'll be released by $ARTIST, check back soon!
-In case you have the lyrics to $TITLE and want to send them to us, fill out
-the following form.
-"""
-        assert not google.is_lyrics(lyrics)
 
 
 def url_to_filename(url):
@@ -232,20 +205,53 @@ class MockFetchUrl:
 LYRICS_ROOT_DIR = os.path.join(_common.RSRC, b"lyrics")
 
 
-class LyricsGoogleBaseTest(unittest.TestCase):
-    def setUp(self):
-        """Set up configuration."""
-        try:
-            __import__("bs4")
-        except ImportError:
-            self.skipTest("Beautiful Soup 4 not available")
+class LyricsBackend(PluginMixin):
+    plugin = "lyrics"
+
+    @pytest.fixture
+    def plugin_config(self):
+        """Return lyrics configuration to test."""
+        return {}
+
+    @pytest.fixture(autouse=True)
+    def _setup_config(self, plugin_config):
+        """Add plugin configuration to beets configuration."""
+        self.config[self.plugin].set(plugin_config)
+
+    @pytest.fixture
+    def backend(self, backend_name):
+        """Return a lyrics backend instance."""
+        return lyrics.LyricsPlugin().backends[backend_name]
+
+    @pytest.mark.integration_test
+    def test_backend_source(self, backend):
+        """Test default backends with a song known to exist in respective
+        databases.
+        """
+        title = "Lady Madonna"
+        res = backend.fetch("The Beatles", title)
+        assert PHRASE_BY_TITLE[title] in res.lower()
 
 
-@pytest.mark.skipif(
-    not os.environ.get("INTEGRATION_TEST") == "1",
-    reason="integration testing not enabled",
-)
-class TestSources:
+class TestGoogleLyrics(LyricsBackend):
+    """Test scraping heuristics on a fake html page."""
+
+    source = dict(
+        url="http://www.example.com",
+        artist="John Doe",
+        title="Beets song",
+        path="/lyrics/beetssong",
+    )
+
+    @pytest.fixture(scope="class")
+    def backend_name(self):
+        return "google"
+
+    @pytest.fixture(scope="class")
+    def plugin_config(self):
+        return {"google_API_key": "test"}
+
+    @pytest.mark.integration_test
     @pytest.mark.parametrize(
         "title, url",
         [
@@ -275,77 +281,40 @@ class TestSources:
             ),
         ],
     )
-    def test_google_source(self, title, url):
+    def test_backend_source(self, backend, title, url):
         """Test if lyrics present on websites registered in beets google custom
         search engine are correctly scraped.
         """
-        response = raw_backend.fetch_url(url)
+        response = backend.fetch_url(url)
         result = lyrics.scrape_lyrics_from_html(response).lower()
 
-        assert google.is_lyrics(result)
+        assert backend.is_lyrics(result)
         assert PHRASE_BY_TITLE[title] in result
 
-    @pytest.mark.parametrize(
-        "backend",
-        [
-            pytest.param(lyrics.Genius, marks=skip_ci),
-            lyrics.Tekstowo,
-            lyrics.LRCLib,
-            # lyrics.MusiXmatch,
-        ],
-    )
-    def test_backend_source(self, backend):
-        """Test default backends with a song known to exist in respective
-        databases.
-        """
-        plugin = lyrics.LyricsPlugin()
-        backend = backend(plugin.config, plugin._log)
-        title = "Lady Madonna"
-        res = backend.fetch("The Beatles", title)
-        assert PHRASE_BY_TITLE[title] in res.lower()
-
-
-class LyricsGooglePluginMachineryTest(LyricsGoogleBaseTest):
-    """Test scraping heuristics on a fake html page."""
-
-    source = dict(
-        url="http://www.example.com",
-        artist="John Doe",
-        title="Beets song",
-        path="/lyrics/beetssong",
-    )
-
-    def setUp(self):
-        """Set up configuration"""
-        LyricsGoogleBaseTest.setUp(self)
-        self.plugin = lyrics.LyricsPlugin()
-
     @patch.object(lyrics.Backend, "fetch_url", MockFetchUrl())
-    def test_mocked_source_ok(self):
+    def test_mocked_source_ok(self, backend):
         """Test that lyrics of the mocked page are correctly scraped"""
         url = self.source["url"] + self.source["path"]
-        res = lyrics.scrape_lyrics_from_html(raw_backend.fetch_url(url))
-        assert google.is_lyrics(res), url
+        res = lyrics.scrape_lyrics_from_html(backend.fetch_url(url))
+        assert backend.is_lyrics(res), url
         assert PHRASE_BY_TITLE[self.source["title"]] in res.lower()
 
     @patch.object(lyrics.Backend, "fetch_url", MockFetchUrl())
-    def test_is_page_candidate_exact_match(self):
+    def test_is_page_candidate_exact_match(self, backend):
         """Test matching html page title with song infos -- when song infos are
         present in the title.
         """
-        from bs4 import BeautifulSoup, SoupStrainer
-
         s = self.source
         url = str(s["url"] + s["path"])
-        html = raw_backend.fetch_url(url)
+        html = backend.fetch_url(url)
         soup = BeautifulSoup(
             html, "html.parser", parse_only=SoupStrainer("title")
         )
-        assert google.is_page_candidate(
+        assert backend.is_page_candidate(
             url, soup.title.string, s["title"], s["artist"]
         ), url
 
-    def test_is_page_candidate_fuzzy_match(self):
+    def test_is_page_candidate_fuzzy_match(self, backend):
         """Test matching html page title with song infos -- when song infos are
         not present in the title.
         """
@@ -354,16 +323,16 @@ class LyricsGooglePluginMachineryTest(LyricsGoogleBaseTest):
         url_title = "example.com | Beats song by John doe"
 
         # very small diffs (typo) are ok eg 'beats' vs 'beets' with same artist
-        assert google.is_page_candidate(
+        assert backend.is_page_candidate(
             url, url_title, s["title"], s["artist"]
         ), url
         # reject different title
         url_title = "example.com | seets bong lyrics by John doe"
-        assert not google.is_page_candidate(
+        assert not backend.is_page_candidate(
             url, url_title, s["title"], s["artist"]
         ), url
 
-    def test_is_page_candidate_special_chars(self):
+    def test_is_page_candidate_special_chars(self, backend):
         """Ensure that `is_page_candidate` doesn't crash when the artist
         and such contain special regular expression characters.
         """
@@ -372,30 +341,37 @@ class LyricsGooglePluginMachineryTest(LyricsGoogleBaseTest):
         url = s["url"] + s["path"]
         url_title = "foo"
 
-        google.is_page_candidate(url, url_title, s["title"], "Sunn O)))")
+        backend.is_page_candidate(url, url_title, s["title"], "Sunn O)))")
+
+    def test_is_lyrics(self, backend):
+        texts = ["LyricsMania.com - Copyright (c) 2013 - All Rights Reserved"]
+        texts += [
+            """All material found on this site is property\n
+                     of mywickedsongtext brand"""
+        ]
+        for t in texts:
+            assert not backend.is_lyrics(t)
+
+    def test_slugify(self, backend):
+        text = "http://site.com/\xe7afe-au_lait(boisson)"
+        assert backend.slugify(text) == "http://site.com/cafe_au_lait"
+
+    def test_missing_lyrics(self, backend):
+        lyrics = """
+Lyricsmania staff is working hard for you to add $TITLE lyrics as soon
+as they'll be released by $ARTIST, check back soon!
+In case you have the lyrics to $TITLE and want to send them to us, fill out
+the following form.
+"""
+        assert not backend.is_lyrics(lyrics)
 
 
-# test Genius backend
+class TestGeniusLyrics(LyricsBackend):
+    @pytest.fixture(scope="class")
+    def backend_name(self):
+        return "genius"
 
-
-class GeniusBaseTest(unittest.TestCase):
-    def setUp(self):
-        """Set up configuration."""
-        try:
-            __import__("bs4")
-        except ImportError:
-            self.skipTest("Beautiful Soup 4 not available")
-
-
-class GeniusScrapeLyricsFromHtmlTest(GeniusBaseTest):
-    """tests Genius._scrape_lyrics_from_html()"""
-
-    def setUp(self):
-        """Set up configuration"""
-        GeniusBaseTest.setUp(self)
-        self.plugin = lyrics.LyricsPlugin()
-
-    def test_no_lyrics_div(self):
+    def test_no_lyrics_div(self, backend):
         """Ensure we don't crash when the scraping the html for a genius page
         doesn't contain <div class="lyrics"></div>
         """
@@ -403,38 +379,27 @@ class GeniusScrapeLyricsFromHtmlTest(GeniusBaseTest):
         # expected return value None
         url = "https://genius.com/sample"
         mock = MockFetchUrl()
-        assert genius._scrape_lyrics_from_html(mock(url)) is None
+        assert backend._scrape_lyrics_from_html(mock(url)) is None
 
-    def test_good_lyrics(self):
+    def test_good_lyrics(self, backend):
         """Ensure we are able to scrape a page with lyrics"""
         url = "https://genius.com/Ttng-chinchilla-lyrics"
         mock = MockFetchUrl()
-        lyrics = genius._scrape_lyrics_from_html(mock(url))
+        lyrics = backend._scrape_lyrics_from_html(mock(url))
         assert lyrics is not None
         assert lyrics.count("\n") == 28
 
-    def test_good_lyrics_multiple_divs(self):
+    def test_good_lyrics_multiple_divs(self, backend):
         """Ensure we are able to scrape a page with lyrics"""
         url = "https://genius.com/2pac-all-eyez-on-me-lyrics"
         mock = MockFetchUrl()
-        lyrics = genius._scrape_lyrics_from_html(mock(url))
+        lyrics = backend._scrape_lyrics_from_html(mock(url))
         assert lyrics is not None
         assert lyrics.count("\n") == 133
 
-    # TODO: find an example of a lyrics page with multiple divs and test it
-
-
-class GeniusFetchTest(GeniusBaseTest):
-    """tests Genius.fetch()"""
-
-    def setUp(self):
-        """Set up configuration"""
-        GeniusBaseTest.setUp(self)
-        self.plugin = lyrics.LyricsPlugin()
-
     @patch.object(lyrics.Genius, "_scrape_lyrics_from_html")
     @patch.object(lyrics.Backend, "fetch_url", return_value=True)
-    def test_json(self, mock_fetch_url, mock_scrape):
+    def test_json(self, mock_fetch_url, mock_scrape, backend):
         """Ensure we're finding artist matches"""
         with patch.object(
             lyrics.Genius,
@@ -462,56 +427,38 @@ class GeniusFetchTest(GeniusBaseTest):
         ) as mock_json:
             # genius uses zero-width-spaces (\u200B) for lowercase
             # artists so we make sure we can match those
-            assert genius.fetch("blackbear", "Idfc") is not None
+            assert backend.fetch("blackbear", "Idfc") is not None
             mock_fetch_url.assert_called_once_with("blackbear_url")
             mock_scrape.assert_called_once_with(True)
 
             # genius uses the hyphen minus (\u002D) as their dash
-            assert genius.fetch("El-p", "Idfc") is not None
+            assert backend.fetch("El-p", "Idfc") is not None
             mock_fetch_url.assert_called_with("El-p_url")
             mock_scrape.assert_called_with(True)
 
             # test no matching artist
-            assert genius.fetch("doesntexist", "none") is None
+            assert backend.fetch("doesntexist", "none") is None
 
             # test invalid json
             mock_json.return_value = None
-            assert genius.fetch("blackbear", "Idfc") is None
-
-    # TODO: add integration test hitting real api
+            assert backend.fetch("blackbear", "Idfc") is None
 
 
-# test Tekstowo
+class TestTekstowoLyrics(LyricsBackend):
+    @pytest.fixture(scope="class")
+    def backend_name(self):
+        return "tekstowo"
 
-
-class TekstowoBaseTest(unittest.TestCase):
-    def setUp(self):
-        """Set up configuration."""
-        try:
-            __import__("bs4")
-        except ImportError:
-            self.skipTest("Beautiful Soup 4 not available")
-
-
-class TekstowoExtractLyricsTest(TekstowoBaseTest):
-    """tests Tekstowo.extract_lyrics()"""
-
-    def setUp(self):
-        """Set up configuration"""
-        TekstowoBaseTest.setUp(self)
-        self.plugin = lyrics.LyricsPlugin()
-        tekstowo.config = self.plugin.config
-
-    def test_good_lyrics(self):
+    def test_good_lyrics(self, backend):
         """Ensure we are able to scrape a page with lyrics"""
         url = "https://www.tekstowo.pl/piosenka,24kgoldn,city_of_angels_1.html"
         mock = MockFetchUrl()
         assert (
-            tekstowo.extract_lyrics(mock(url), "24kGoldn", "City of Angels")
+            backend.extract_lyrics(mock(url), "24kGoldn", "City of Angels")
             is not None
         )
 
-    def test_no_lyrics(self):
+    def test_no_lyrics(self, backend):
         """Ensure we don't crash when the scraping the html for a Tekstowo page
         doesn't contain lyrics
         """
@@ -521,7 +468,7 @@ class TekstowoExtractLyricsTest(TekstowoBaseTest):
         )
         mock = MockFetchUrl()
         assert (
-            tekstowo.extract_lyrics(
+            backend.extract_lyrics(
                 mock(url),
                 "Beethoven",
                 "Beethoven Piano Sonata 17" "Tempest The 3rd Movement",
@@ -529,7 +476,7 @@ class TekstowoExtractLyricsTest(TekstowoBaseTest):
             is None
         )
 
-    def test_song_no_match(self):
+    def test_song_no_match(self, backend):
         """Ensure we return None when a song does not match the search query"""
         # https://github.com/beetbox/beets/issues/4406
         # expected return value None
@@ -539,22 +486,13 @@ class TekstowoExtractLyricsTest(TekstowoBaseTest):
         )
         mock = MockFetchUrl()
         assert (
-            tekstowo.extract_lyrics(
+            backend.extract_lyrics(
                 mock(url), "Kelly Bailey", "Black Mesa Inbound"
             )
             is None
         )
 
-
-class TekstowoParseSearchResultsTest(TekstowoBaseTest):
-    """tests Tekstowo.parse_search_results()"""
-
-    def setUp(self):
-        """Set up configuration"""
-        TekstowoBaseTest.setUp(self)
-        self.plugin = lyrics.LyricsPlugin()
-
-    def test_multiple_results(self):
+    def test_multiple_results(self, backend):
         """Ensure we are able to scrape a page with multiple search results"""
         url = (
             "https://www.tekstowo.pl/szukaj,wykonawca,juice+wrld"
@@ -562,48 +500,41 @@ class TekstowoParseSearchResultsTest(TekstowoBaseTest):
         )
         mock = MockFetchUrl()
         assert (
-            tekstowo.parse_search_results(mock(url))
+            backend.parse_search_results(mock(url))
             == "http://www.tekstowo.pl/piosenka,juice_wrld,"
             "lucid_dreams__remix__ft__lil_uzi_vert.html"
         )
 
-    def test_no_results(self):
+    def test_no_results(self, backend):
         """Ensure we are able to scrape a page with no search results"""
         url = (
             "https://www.tekstowo.pl/szukaj,wykonawca,"
             "agfdgja,tytul,agfdgafg.html"
         )
         mock = MockFetchUrl()
-        assert tekstowo.parse_search_results(mock(url)) is None
-
-
-# test LRCLib backend
+        assert backend.parse_search_results(mock(url)) is None
 
 
 def lyrics_match(duration, synced, plain):
     return {"duration": duration, "syncedLyrics": synced, "plainLyrics": plain}
 
 
-class TestLRCLibLyrics:
+class TestLRCLibLyrics(LyricsBackend):
     ITEM_DURATION = 999
 
-    @pytest.fixture
-    def config(self):
-        return {"synced": True}
-
-    @pytest.fixture
-    def lrclib(self, config):
-        return lyrics.LRCLib(config, log)
+    @pytest.fixture(scope="class")
+    def backend_name(self):
+        return "lrclib"
 
     @pytest.fixture
     def response_data(self):
         return [lyrics_match(1, "synced", "plain")]
 
     @pytest.fixture
-    def fetch_lyrics(self, lrclib, requests_mock, response_data):
-        requests_mock.get(lyrics.LRCLib.base_url, json=response_data)
+    def fetch_lyrics(self, backend, requests_mock, response_data):
+        requests_mock.get(backend.base_url, json=response_data)
 
-        return partial(lrclib.fetch, "la", "la", "la", self.ITEM_DURATION)
+        return partial(backend.fetch, "la", "la", "la", self.ITEM_DURATION)
 
     @pytest.mark.parametrize(
         "response_data, expected_lyrics",
@@ -637,11 +568,12 @@ class TestLRCLibLyrics:
             ),
         ],
     )
+    @pytest.mark.parametrize("plugin_config", [{"synced": True}])
     def test_pick_lyrics_match(self, fetch_lyrics, expected_lyrics):
         assert fetch_lyrics() == expected_lyrics
 
     @pytest.mark.parametrize(
-        "config, expected_lyrics",
+        "plugin_config, expected_lyrics",
         [({"synced": True}, "synced"), ({"synced": False}, "plain")],
     )
     def test_synced_config_option(self, fetch_lyrics, expected_lyrics):
@@ -652,9 +584,9 @@ class TestLRCLibLyrics:
         [
             (
                 {"status_code": HTTPStatus.BAD_GATEWAY},
-                r"^LRCLib: Request error: 502",
+                r"LRCLib: Request error: 502",
             ),
-            ({"text": "invalid"}, r"^LRCLib: Could not decode.*JSON"),
+            ({"text": "invalid"}, r"LRCLib: Could not decode.*JSON"),
         ],
     )
     def test_error(
