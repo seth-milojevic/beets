@@ -20,11 +20,11 @@ import atexit
 import difflib
 import errno
 import itertools
-import json
 import os.path
 import re
 import unicodedata
 import urllib
+from contextlib import contextmanager
 from functools import cached_property
 from html import unescape
 from typing import Any, Iterator
@@ -111,8 +111,12 @@ epub_tocdup = False
 
 class TimeoutSession(requests.Session):
     def request(self, *args, **kwargs):
+        """Wrap the request method to raise an exception on HTTP errors."""
         kwargs.setdefault("timeout", 10)
-        return super().request(*args, **kwargs)
+        r = super().request(*args, **kwargs)
+        r.raise_for_status()
+
+        return r
 
 
 r_session = TimeoutSession()
@@ -226,6 +230,30 @@ else:
         return None
 
 
+class RequestHandler:
+    _log: beets.logging.Logger
+
+    def fetch_text(self, url: str, **kwargs) -> str:
+        """Return text / HTML data from the given URL."""
+        self._log.debug("Fetching HTML from {}", url)
+        return r_session.get(url, **kwargs).text
+
+    def fetch_json(self, url: str, **kwargs):
+        """Return JSON data from the given URL."""
+        self._log.debug("Fetching JSON from {}", url)
+        return r_session.get(url, **kwargs).json()
+
+    @contextmanager
+    def handle_request(self) -> Iterator[None]:
+        try:
+            yield
+        except requests.JSONDecodeError:
+            self._log.warning("Could not decode response JSON data")
+        except requests.RequestException as exc:
+            self._log.warning("Request error: {}", exc)
+
+
+
 class BackendType(type):
     """Metaclass for the :class:`Backend` class.
 
@@ -255,7 +283,7 @@ class BackendType(type):
         return iter(cls._registry)
 
 
-class Backend(metaclass=BackendType):
+class Backend(RequestHandler, metaclass=BackendType):
     REQUIRES_BS = False
 
     def __init__(self, config, log):
@@ -277,23 +305,8 @@ class Backend(metaclass=BackendType):
             self._encode(title.title()),
         )
 
-    def fetch_url(self, url):
-        """Retrieve the content at a given URL, or return None if the source
-        is unreachable.
-        """
-        try:
-            r = r_session.get(url)
-        except requests.RequestException as exc:
-            self._log.debug("lyrics request failed: {0}", exc)
-            return
-        if r.status_code == requests.codes.ok:
-            return r.text
-        else:
-            self._log.debug("failed to fetch: {0} ({1})", url, r.status_code)
-            return None
-
     def fetch(self, artist, title, album=None, length=None):
-        raise NotImplementedError()
+        raise NotImplementedError
 
 
 class LRCLibItem(TypedDict):
@@ -356,22 +369,14 @@ class LRCLib(Backend):
             "album_name": album,
         }
 
-        try:
-            response = r_session.get(self.base_url, params=params)
-            response.raise_for_status()
-            data: list[LRCLibItem] = response.json()
-        except requests.JSONDecodeError:
-            self.msg("Could not decode response JSON data")
-        except requests.RequestException as exc:
-            self.msg("Request error: {}", exc)
-        else:
-            if data:
-                item = self.pick_lyrics(length, data)
+        data: list[LRCLibItem]
+        if data := self.fetch_json(self.base_url, params=params):
+            item = self.pick_lyrics(length, data)
 
-                if self.config["synced"] and (synced := item["syncedLyrics"]):
-                    return synced
+            if self.config["synced"] and (synced := item["syncedLyrics"]):
+                return synced
 
-                return item["plainLyrics"]
+            return item["plainLyrics"]
 
         return None
 
@@ -398,7 +403,7 @@ class MusiXmatch(Backend):
     def fetch(self, artist, title, album=None, length=None):
         url = self.build_url(artist, title)
 
-        html = self.fetch_url(url)
+        html = self.fetch_text(url)
         if not html:
             return None
         if "We detected that your IP is blocked" in html:
@@ -434,6 +439,7 @@ class Genius(Backend):
     REQUIRES_BS = True
 
     base_url = "https://api.genius.com"
+    search_url = f"{base_url}/search"
 
     def __init__(self, config, log):
         super().__init__(config, log)
@@ -457,7 +463,7 @@ class Genius(Backend):
             hit_artist = hit["result"]["primary_artist"]["name"]
 
             if slug(hit_artist) == slug(artist):
-                html = self.fetch_url(hit["result"]["url"])
+                html = self.fetch_text(hit["result"]["url"])
                 if not html:
                     return None
                 return self._scrape_lyrics_from_html(html)
@@ -474,18 +480,11 @@ class Genius(Backend):
 
         :returns: json response
         """
-        search_url = self.base_url + "/search"
-        data = {"q": title + " " + artist.lower()}
-        try:
-            r = r_session.get(search_url, params=data, headers=self.headers)
-        except requests.RequestException as exc:
-            self._log.debug("Genius API request failed: {0}", exc)
-            return None
-
-        try:
-            return r.json()
-        except ValueError:
-            return None
+        return self.fetch_json(
+            self.search_url,
+            params={"q": f"{title} {artist.lower()}"},
+            headers=self.headers,
+        )
 
     def replace_br(self, lyrics_div):
         for br in lyrics_div.find_all("br"):
@@ -563,7 +562,7 @@ class Tekstowo(Backend):
 
     def fetch(self, artist, title, album=None, length=None):
         url = self.build_url(title, artist)
-        search_results = self.fetch_url(url)
+        search_results = self.fetch_text(url)
         if not search_results:
             return None
 
@@ -571,7 +570,7 @@ class Tekstowo(Backend):
         if not song_page_url:
             return None
 
-        song_page_html = self.fetch_url(song_page_url)
+        song_page_html = self.fetch_text(song_page_url)
         if not song_page_html:
             return None
 
@@ -806,14 +805,7 @@ class Google(Backend):
             urllib.parse.quote(query.encode("utf-8")),
         )
 
-        data = self.fetch_url(url)
-        if not data:
-            self._log.debug("google backend returned no data")
-            return None
-        try:
-            data = json.loads(data)
-        except ValueError as exc:
-            self._log.debug("google backend returned malformed JSON: {}", exc)
+        data = self.fetch_json(url)
         if "error" in data:
             reason = data["error"]["errors"][0]["reason"]
             self._log.debug("google backend error: {0}", reason)
@@ -827,7 +819,7 @@ class Google(Backend):
                     url_link, url_title, title, artist
                 ):
                     continue
-                lyrics = scrape_lyrics_from_html(self.fetch_url(url_link))
+                lyrics = scrape_lyrics_from_html(self.fetch_text(url_link))
                 if not lyrics:
                     continue
 
@@ -905,7 +897,6 @@ class LyricsPlugin(plugins.BeetsPlugin):
         self.config["bing_lang_from"] = [
             x.lower() for x in self.config["bing_lang_from"].as_str_seq()
         ]
-        self.bing_auth_token = None
 
         if not HAS_LANGDETECT and self.config["bing_client_secret"].get():
             self._log.warning(
@@ -914,7 +905,8 @@ class LyricsPlugin(plugins.BeetsPlugin):
                 "documentation for further details."
             )
 
-    def get_bing_access_token(self):
+    @cached_property
+    def bing_access_token(self) -> str | None:
         params = {
             "client_id": "beets",
             "client_secret": self.config["bing_client_secret"],
@@ -923,14 +915,15 @@ class LyricsPlugin(plugins.BeetsPlugin):
         }
 
         oauth_url = "https://datamarket.accesscontrol.windows.net/v2/OAuth2-13"
-        oauth_token = r_session.post(oauth_url, params=params).json()
-        if "access_token" in oauth_token:
-            return "Bearer " + oauth_token["access_token"]
-        else:
-            self._log.warning(
-                "Could not get Bing Translate API access token."
-                ' Check your "bing_client_secret" password'
-            )
+        with self.handle_request():
+            r = r_session.post(oauth_url, params=params)
+            return r.json()["access_token"]
+
+        self._log.warning(
+            "Could not get Bing Translate API access token. "
+            "Check your 'bing_client_secret' password."
+        )
+        return None
 
     def commands(self):
         cmd = ui.Subcommand("lyrics", help="fetch song lyrics")
@@ -1125,40 +1118,32 @@ class LyricsPlugin(plugins.BeetsPlugin):
         None if no lyrics were found.
         """
         for name, backend in self.backends.items():
-            lyrics = backend.fetch(artist, title, album=album, length=length)
-            if lyrics:
-                self._log.debug("got lyrics from backend: {0}", name)
-                return _scrape_strip_cruft(lyrics, True)
+            with backend.handle_request():
+                if lyrics := backend.fetch(
+                    artist, title, album=album, length=length
+                ):
+                    self._log.debug("got lyrics from backend: {0}", name)
+                    return _scrape_strip_cruft(lyrics, True)
 
     def append_translation(self, text, to_lang):
         from xml.etree import ElementTree
 
-        if not self.bing_auth_token:
-            self.bing_auth_token = self.get_bing_access_token()
-        if self.bing_auth_token:
-            # Extract unique lines to limit API request size per song
-            text_lines = set(text.split("\n"))
-            url = (
-                "https://api.microsofttranslator.com/v2/Http.svc/"
-                "Translate?text=%s&to=%s" % ("|".join(text_lines), to_lang)
+        if not (token := self.bing_access_token):
+            return text
+
+        # Extract unique lines to limit API request size per song
+        lines = text.split("\n")
+        unique_lines = set(lines)
+        url = "https://api.microsofttranslator.com/v2/Http.svc/Translate"
+        with self.handle_request():
+            text = self.fetch_text(
+                url,
+                headers={"Authorization": f"Bearer {token}"},
+                params={"text": "|".join(unique_lines), "to": to_lang},
             )
-            r = r_session.get(
-                url, headers={"Authorization": self.bing_auth_token}
-            )
-            if r.status_code != 200:
-                self._log.debug(
-                    "translation API error {}: {}", r.status_code, r.text
-                )
-                if "token has expired" in r.text:
-                    self.bing_auth_token = None
-                    return self.append_translation(text, to_lang)
-                return text
-            lines_translated = ElementTree.fromstring(
-                r.text.encode("utf-8")
-            ).text
-            # Use a translation mapping dict to build resulting lyrics
-            translations = dict(zip(text_lines, lines_translated.split("|")))
-            result = ""
-            for line in text.split("\n"):
-                result += "{} / {}\n".format(line, translations[line])
-            return result
+            if translated := ElementTree.fromstring(text.encode("utf-8")).text:
+                # Use a translation mapping dict to build resulting lyrics
+                translations = dict(zip(unique_lines, translated.split("|")))
+                return "".join(f"{ln} / {translations[ln]}\n" for ln in lines)
+
+        return text

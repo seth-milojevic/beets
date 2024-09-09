@@ -205,7 +205,7 @@ class MockFetchUrl:
 LYRICS_ROOT_DIR = os.path.join(_common.RSRC, b"lyrics")
 
 
-class LyricsBackend(PluginMixin):
+class LyricsPluginMixin(PluginMixin):
     plugin = "lyrics"
 
     @pytest.fixture
@@ -218,6 +218,8 @@ class LyricsBackend(PluginMixin):
         """Add plugin configuration to beets configuration."""
         self.config[self.plugin].set(plugin_config)
 
+
+class LyricsPluginBackendMixin(LyricsPluginMixin):
     @pytest.fixture
     def backend(self, backend_name):
         """Return a lyrics backend instance."""
@@ -233,7 +235,37 @@ class LyricsBackend(PluginMixin):
         assert PHRASE_BY_TITLE[title] in res.lower()
 
 
-class TestGoogleLyrics(LyricsBackend):
+class TestLyricsPlugin(LyricsPluginMixin):
+    @pytest.fixture
+    def plugin_config(self):
+        """Return lyrics configuration to test."""
+        return {"sources": ["lrclib"]}
+
+    @pytest.mark.parametrize(
+        "request_kwargs, expected_log_match",
+        [
+            (
+                {"status_code": HTTPStatus.BAD_GATEWAY},
+                r"lyrics: Request error: 502",
+            ),
+            ({"text": "invalid"}, r"lyrics: Could not decode.*JSON"),
+        ],
+    )
+    def test_error_handling(
+        self, requests_mock, caplog, request_kwargs, expected_log_match
+    ):
+        """Errors are logged with the plugin and backend name."""
+        requests_mock.get(lyrics.LRCLib.base_url, **request_kwargs)
+
+        plugin = lyrics.LyricsPlugin()
+        assert plugin.get_lyrics("", "") is None
+        assert caplog.messages
+        last_log = caplog.messages[-1]
+        assert last_log
+        assert re.search(expected_log_match, last_log, re.I)
+
+
+class TestGoogleLyrics(LyricsPluginBackendMixin):
     """Test scraping heuristics on a fake html page."""
 
     source = dict(
@@ -285,28 +317,28 @@ class TestGoogleLyrics(LyricsBackend):
         """Test if lyrics present on websites registered in beets google custom
         search engine are correctly scraped.
         """
-        response = backend.fetch_url(url)
+        response = backend.fetch_text(url)
         result = lyrics.scrape_lyrics_from_html(response).lower()
 
         assert backend.is_lyrics(result)
         assert PHRASE_BY_TITLE[title] in result
 
-    @patch.object(lyrics.Backend, "fetch_url", MockFetchUrl())
+    @patch.object(lyrics.Backend, "fetch_text", MockFetchUrl())
     def test_mocked_source_ok(self, backend):
         """Test that lyrics of the mocked page are correctly scraped"""
         url = self.source["url"] + self.source["path"]
-        res = lyrics.scrape_lyrics_from_html(backend.fetch_url(url))
+        res = lyrics.scrape_lyrics_from_html(backend.fetch_text(url))
         assert backend.is_lyrics(res), url
         assert PHRASE_BY_TITLE[self.source["title"]] in res.lower()
 
-    @patch.object(lyrics.Backend, "fetch_url", MockFetchUrl())
+    @patch.object(lyrics.Backend, "fetch_text", MockFetchUrl())
     def test_is_page_candidate_exact_match(self, backend):
         """Test matching html page title with song infos -- when song infos are
         present in the title.
         """
         s = self.source
         url = str(s["url"] + s["path"])
-        html = backend.fetch_url(url)
+        html = backend.fetch_text(url)
         soup = BeautifulSoup(
             html, "html.parser", parse_only=SoupStrainer("title")
         )
@@ -366,7 +398,7 @@ the following form.
         assert not backend.is_lyrics(lyrics)
 
 
-class TestGeniusLyrics(LyricsBackend):
+class TestGeniusLyrics(LyricsPluginBackendMixin):
     @pytest.fixture(scope="class")
     def backend_name(self):
         return "genius"
@@ -398,8 +430,8 @@ class TestGeniusLyrics(LyricsBackend):
         assert lyrics.count("\n") == 133
 
     @patch.object(lyrics.Genius, "_scrape_lyrics_from_html")
-    @patch.object(lyrics.Backend, "fetch_url", return_value=True)
-    def test_json(self, mock_fetch_url, mock_scrape, backend):
+    @patch.object(lyrics.Backend, "fetch_text", return_value=True)
+    def test_json(self, mock_fetch_text, mock_scrape, backend):
         """Ensure we're finding artist matches"""
         with patch.object(
             lyrics.Genius,
@@ -428,12 +460,12 @@ class TestGeniusLyrics(LyricsBackend):
             # genius uses zero-width-spaces (\u200B) for lowercase
             # artists so we make sure we can match those
             assert backend.fetch("blackbear", "Idfc") is not None
-            mock_fetch_url.assert_called_once_with("blackbear_url")
+            mock_fetch_text.assert_called_once_with("blackbear_url")
             mock_scrape.assert_called_once_with(True)
 
             # genius uses the hyphen minus (\u002D) as their dash
             assert backend.fetch("El-p", "Idfc") is not None
-            mock_fetch_url.assert_called_with("El-p_url")
+            mock_fetch_text.assert_called_with("El-p_url")
             mock_scrape.assert_called_with(True)
 
             # test no matching artist
@@ -444,7 +476,7 @@ class TestGeniusLyrics(LyricsBackend):
             assert backend.fetch("blackbear", "Idfc") is None
 
 
-class TestTekstowoLyrics(LyricsBackend):
+class TestTekstowoLyrics(LyricsPluginBackendMixin):
     @pytest.fixture(scope="class")
     def backend_name(self):
         return "tekstowo"
@@ -519,7 +551,7 @@ def lyrics_match(duration, synced, plain):
     return {"duration": duration, "syncedLyrics": synced, "plainLyrics": plain}
 
 
-class TestLRCLibLyrics(LyricsBackend):
+class TestLRCLibLyrics(LyricsPluginBackendMixin):
     ITEM_DURATION = 999
 
     @pytest.fixture(scope="class")
@@ -578,34 +610,6 @@ class TestLRCLibLyrics(LyricsBackend):
     )
     def test_synced_config_option(self, fetch_lyrics, expected_lyrics):
         assert fetch_lyrics() == expected_lyrics
-
-    @pytest.mark.parametrize(
-        "request_kwargs, expected_log_match",
-        [
-            (
-                {"status_code": HTTPStatus.BAD_GATEWAY},
-                r"LRCLib: Request error: 502",
-            ),
-            ({"text": "invalid"}, r"LRCLib: Could not decode.*JSON"),
-        ],
-    )
-    def test_error(
-        self,
-        requests_mock,
-        caplog,
-        fetch_lyrics,
-        request_kwargs,
-        expected_log_match,
-    ):
-        requests_mock.get(lyrics.LRCLib.base_url, **request_kwargs)
-
-        assert fetch_lyrics() is None
-        assert caplog.messages
-        assert (last_log := caplog.messages[-1])
-        assert re.search(expected_log_match, last_log, re.I)
-
-
-# test utilities
 
 
 class SlugTests(unittest.TestCase):
