@@ -25,8 +25,9 @@ import re
 import unicodedata
 import urllib
 import warnings
+from functools import cached_property
 from html import unescape
-from typing import Any
+from typing import Any, Iterator
 
 import requests
 from typing_extensions import TypedDict
@@ -209,7 +210,36 @@ else:
         return None
 
 
-class Backend:
+class BackendType(type):
+    """Metaclass for the :class:`Backend` class.
+
+    It keeps track of defined subclasses and provides access to them through
+    the base class:
+
+    >>> Backend["genius"]  # beetsplug.lyrics.Genius
+    >>> list(Backend)  # ["lrclib", "musixmatch", "genius", "tekstowo", "google"]
+    """
+
+    _registry: dict[str, BackendType] = {}
+    REQUIRES_BS: bool
+
+    def __new__(cls, name: str, bases: tuple[type, ...], attrs) -> BackendType:
+        """Create a new instance of the class and add it to the registry."""
+        new_class = super().__new__(cls, name, bases, attrs)
+        if bases:
+            cls._registry[name.lower()] = new_class
+        return new_class
+
+    @classmethod
+    def __getitem__(cls, key: str) -> BackendType:
+        return cls._registry[key]
+
+    @classmethod
+    def __iter__(cls) -> Iterator[str]:
+        return iter(cls._registry)
+
+
+class Backend(metaclass=BackendType):
     REQUIRES_BS = False
 
     def __init__(self, config, log):
@@ -814,14 +844,29 @@ class Google(Backend):
 
 
 class LyricsPlugin(plugins.BeetsPlugin):
-    SOURCES = ["lrclib", "google", "musixmatch", "genius", "tekstowo"]
-    SOURCE_BACKENDS = {
-        "google": Google,
-        "musixmatch": MusiXmatch,
-        "genius": Genius,
-        "tekstowo": Tekstowo,
-        "lrclib": LRCLib,
-    }
+    @cached_property
+    def backends(self) -> dict[str, Backend]:
+        user_sources = self.config["sources"].get()
+        chosen = plugins.sanitize_choices(user_sources, Backend)
+
+        disabled = set()
+        if not HAS_BEAUTIFUL_SOUP:
+            disabled |= {n for n in chosen if Backend[n].REQUIRES_BS}
+            if disabled:
+                self._log.debug(
+                    "Disabling {} sources: missing beautifulsoup4 module",
+                    disabled,
+                )
+
+        elif "google" in chosen and not self.config["google_API_key"].get():
+            self._log.debug("Disabling Google source: no API key configured.")
+            disabled.add("google")
+
+        return {
+            s: Backend[s](self.config, self._log)
+            for s in chosen
+            if s not in disabled
+        }
 
     def __init__(self):
         super().__init__()
@@ -844,7 +889,7 @@ class LyricsPlugin(plugins.BeetsPlugin):
                 "synced": False,
                 # Musixmatch is disabled by default as they are currently blocking
                 # requests with the beets user agent.
-                "sources": [s for s in self.SOURCES if s != "musixmatch"],
+                "sources": [s for s in Backend if s != "musixmatch"],
                 "dist_thresh": 0.1,
             }
         )
@@ -862,25 +907,6 @@ class LyricsPlugin(plugins.BeetsPlugin):
         # open yet.
         self.rest = None
 
-        available_sources = list(self.SOURCES)
-        sources = plugins.sanitize_choices(
-            self.config["sources"].as_str_seq(), available_sources
-        )
-
-        if not HAS_BEAUTIFUL_SOUP:
-            sources = self.sanitize_bs_sources(sources)
-
-        if "google" in sources:
-            if not self.config["google_API_key"].get():
-                # We log a *debug* message here because the default
-                # configuration includes `google`. This way, the source
-                # is silent by default but can be enabled just by
-                # setting an API key.
-                self._log.debug(
-                    "Disabling google source: " "no API key configured."
-                )
-                sources.remove("google")
-
         self.config["bing_lang_from"] = [
             x.lower() for x in self.config["bing_lang_from"].as_str_seq()
         ]
@@ -892,25 +918,6 @@ class LyricsPlugin(plugins.BeetsPlugin):
                 "install the langdetect module. See the "
                 "documentation for further details."
             )
-
-        self.backends = [
-            self.SOURCE_BACKENDS[source](self.config, self._log)
-            for source in sources
-        ]
-
-    def sanitize_bs_sources(self, sources):
-        enabled_sources = []
-        for source in sources:
-            if self.SOURCE_BACKENDS[source].REQUIRES_BS:
-                self._log.debug(
-                    "To use the %s lyrics source, you must "
-                    "install the beautifulsoup4 module. See "
-                    "the documentation for further details." % source
-                )
-            else:
-                enabled_sources.append(source)
-
-        return enabled_sources
 
     def get_bing_access_token(self):
         params = {
@@ -1128,12 +1135,10 @@ class LyricsPlugin(plugins.BeetsPlugin):
         """Fetch lyrics, trying each source in turn. Return a string or
         None if no lyrics were found.
         """
-        for backend in self.backends:
+        for name, backend in self.backends.items():
             lyrics = backend.fetch(artist, title, album=album, length=length)
             if lyrics:
-                self._log.debug(
-                    "got lyrics from backend: {0}", backend.__class__.__name__
-                )
+                self._log.debug("got lyrics from backend: {0}", name)
                 return _scrape_strip_cruft(lyrics, True)
 
     def append_translation(self, text, to_lang):
