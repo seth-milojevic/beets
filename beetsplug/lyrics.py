@@ -389,8 +389,6 @@ class MusiXmatch(Backend):
         url = self.build_url(artist, title)
 
         html = self.fetch_text(url)
-        if not html:
-            return None
         if "We detected that your IP is blocked" in html:
             self.warn("Failed: Blocked IP address")
             return None
@@ -444,8 +442,6 @@ class Genius(Backend):
 
             if slug(hit_artist) == slug(artist):
                 html = self.fetch_text(hit["result"]["url"])
-                if not html:
-                    return None
                 return self._scrape_lyrics_from_html(html)
 
         self.debug("Failed to find a matching artist for '{}'", artist)
@@ -468,12 +464,12 @@ class Genius(Backend):
         for br in lyrics_div.find_all("br"):
             br.replace_with("\n")
 
-    def _scrape_lyrics_from_html(self, html):
+    def _scrape_lyrics_from_html(self, html: str) -> str | None:
         """Scrape lyrics from a given genius.com html"""
 
         soup = try_parse_html(html)
         if not soup:
-            return
+            return None
 
         # Remove script tags that they put in the middle of the lyrics.
         [h.extract() for h in soup("script")]
@@ -545,22 +541,15 @@ class Tekstowo(Backend):
         )
 
     def fetch(self, artist, title, album=None, length=None):
-        url = self.build_url(title, artist)
-        search_results = self.fetch_text(url)
-        if not search_results:
-            return None
-
+        search_results = self.fetch_text(self.build_url(title, artist))
         song_page_url = self.parse_search_results(search_results)
         if not song_page_url:
             return None
 
         song_page_html = self.fetch_text(song_page_url)
-        if not song_page_html:
-            return None
-
         return self.extract_lyrics(song_page_html, artist, title)
 
-    def parse_search_results(self, html):
+    def parse_search_results(self, html: str) -> str | None:
         html = _scrape_strip_cruft(html)
         html = _scrape_merge_paragraphs(html)
 
@@ -590,7 +579,7 @@ class Tekstowo(Backend):
 
         return self.BASE_URL + link.get("href")
 
-    def extract_lyrics(self, html, artist, title):
+    def extract_lyrics(self, html: str, artist: str, title: str) -> str | None:
         html = _scrape_strip_cruft(html)
         html = _scrape_merge_paragraphs(html)
 
@@ -663,12 +652,10 @@ def _scrape_merge_paragraphs(html):
     return re.sub(r"<div .*>\s*</div>", "\n", html)
 
 
-def scrape_lyrics_from_html(html: str | None) -> str | None:
+def scrape_lyrics_from_html(html: str) -> str | None:
     """Scrape lyrics from a URL. If no lyrics can be found, return None
     instead.
     """
-    if not html:
-        return None
 
     def is_text_notcode(text):
         if not text:
