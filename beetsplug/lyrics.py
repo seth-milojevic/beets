@@ -52,9 +52,6 @@ import beets
 from beets import plugins, ui
 from beets.autotag.hooks import string_dist
 
-DIV_RE = re.compile(r"<(/?)div>?", re.I)
-COMMENT_RE = re.compile(r"<!--.*-->", re.S)
-TAG_RE = re.compile(r"<[^>]*>")
 BREAK_RE = re.compile(r"\n?\s*<br([\s|/][^>]*)*>\s*\n?", re.I)
 USER_AGENT = f"beets/{beets.__version__}"
 
@@ -592,7 +589,7 @@ def remove_credits(text):
     return text
 
 
-def _scrape_strip_cruft(html, plain_text_out=False):
+def _scrape_strip_cruft(html: str) -> str:
     """Clean up HTML"""
     html = unescape(html)
 
@@ -604,13 +601,8 @@ def _scrape_strip_cruft(html, plain_text_out=False):
     html = re.sub("<aside .+?</aside>", "", html)  # remove Google Ads tags
     html = re.sub(r"</?(em|strong)[^>]*>", "", html)  # remove bold / italics
 
-    if plain_text_out:  # Strip remaining HTML tags
-        html = COMMENT_RE.sub("", html)
-        html = TAG_RE.sub("", html)
-
     html = "\n".join([x.strip() for x in html.strip().split("\n")])
-    html = re.sub(r"\n{3,}", r"\n\n", html)
-    return html
+    return re.sub(r"\n{3,}", r"\n\n", html)
 
 
 def _scrape_merge_paragraphs(html):
@@ -1045,7 +1037,7 @@ class LyricsPlugin(RequestHandler, plugins.BeetsPlugin):
                 if lyrics := backend.fetch(
                     artist, title, album=album, length=length
                 ):
-                    return _scrape_strip_cruft(lyrics, True)
+                    return lyrics
 
     def append_translation(self, text, to_lang):
         from xml.etree import ElementTree

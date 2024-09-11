@@ -151,22 +151,9 @@ class LyricsPluginTest(unittest.TestCase):
                   if the beat aint crackin"""
         assert lyrics.remove_credits(text) == text
 
-    def test_scrape_strip_cruft(self):
-        text = """<!--lyrics below-->
-                  &nbsp;one
-                  <br class='myclass'>
-                  two  !
-                  <br><br \\>
-                  <blink>four</blink>"""
-        assert lyrics._scrape_strip_cruft(text, True) == "one\ntwo !\n\nfour"
-
     def test_scrape_strip_scripts(self):
         text = """foo<script>bar</script>baz"""
-        assert lyrics._scrape_strip_cruft(text, True) == "foobaz"
-
-    def test_scrape_strip_tag_in_comment(self):
-        text = """foo<!--<bar>-->qux"""
-        assert lyrics._scrape_strip_cruft(text, True) == "fooqux"
+        assert lyrics._scrape_strip_cruft(text) == "foobaz"
 
     def test_scrape_merge_paragraphs(self):
         text = "one</p>   <p class='myclass'>two</p><p>three"
