@@ -296,14 +296,14 @@ class TestGoogleLyrics(LyricsPluginBackendMixin):
         search engine are correctly scraped.
         """
         response = backend.fetch_text(url)
-        result = lyrics.scrape_lyrics_from_html(response).lower()
+        result = backend.scrape_lyrics(response).lower()
 
         assert backend.is_lyrics(result)
         assert PHRASE_BY_TITLE[title] in result
 
     def test_mocked_source_ok(self, backend, lyrics_html):
         """Test that lyrics of the mocked page are correctly scraped"""
-        result = lyrics.scrape_lyrics_from_html(lyrics_html).lower()
+        result = backend.scrape_lyrics(lyrics_html).lower()
 
         assert result
         assert backend.is_lyrics(result)
@@ -367,11 +367,11 @@ class TestGeniusLyrics(LyricsPluginBackendMixin):
     def test_scrape_genius_lyrics(
         self, backend, lyrics_html, expected_line_count
     ):
-        result = backend._scrape_lyrics_from_html(lyrics_html) or ""
+        result = backend.scrape_lyrics(lyrics_html) or ""
 
         assert len(result.splitlines()) == expected_line_count
 
-    @patch.object(lyrics.Genius, "_scrape_lyrics_from_html")
+    @patch.object(lyrics.Genius, "scrape_lyrics")
     @patch.object(lyrics.Backend, "fetch_text", return_value=True)
     def test_json(self, mock_fetch_text, mock_scrape, backend):
         """Ensure we're finding artist matches"""
@@ -452,7 +452,7 @@ class TestTekstowoLyrics(LyricsPluginBackendMixin):
     def test_scrape_tekstowo_lyrics(
         self, backend, lyrics_html, query, should_scrape
     ):
-        actually_scraped = bool(backend.extract_lyrics(lyrics_html, *query))
+        actually_scraped = bool(backend.scrape_lyrics(lyrics_html, *query))
         assert actually_scraped == should_scrape
 
     @pytest.mark.parametrize(

@@ -34,8 +34,7 @@ from typing_extensions import TypedDict
 from unidecode import unidecode
 
 try:
-    import bs4
-    from bs4 import SoupStrainer
+    from bs4 import BeautifulSoup
 
     HAS_BEAUTIFUL_SOUP = True
 except ImportError:
@@ -203,17 +202,6 @@ def slug(text):
     elsewhere.
     """
     return re.sub(r"\W+", "-", unidecode(text).lower().strip()).strip("-")
-
-
-if HAS_BEAUTIFUL_SOUP:
-
-    def try_parse_html(html, **kwargs):
-        return bs4.BeautifulSoup(html, "html.parser", **kwargs)
-
-else:
-
-    def try_parse_html(html, **kwargs):
-        return None
 
 
 class RequestHandler:
@@ -442,7 +430,7 @@ class Genius(Backend):
 
             if slug(hit_artist) == slug(artist):
                 html = self.fetch_text(hit["result"]["url"])
-                return self._scrape_lyrics_from_html(html)
+                return self.scrape_lyrics(html)
 
         self.debug("Failed to find a matching artist for '{}'", artist)
         return None
@@ -460,19 +448,9 @@ class Genius(Backend):
             headers=self.headers,
         )
 
-    def replace_br(self, lyrics_div):
-        for br in lyrics_div.find_all("br"):
-            br.replace_with("\n")
-
-    def _scrape_lyrics_from_html(self, html: str) -> str | None:
+    def scrape_lyrics(self, html: str) -> str | None:
         """Scrape lyrics from a given genius.com html"""
-
-        soup = try_parse_html(html)
-        if not soup:
-            return None
-
-        # Remove script tags that they put in the middle of the lyrics.
-        [h.extract() for h in soup("script")]
+        soup = get_soup(html)
 
         # Most of the time, the page contains a div with class="lyrics" where
         # all of the lyrics can be found already correctly formatted
@@ -487,7 +465,6 @@ class Genius(Backend):
             )
         lyrics = ""
         for lyrics_div in lyrics_divs:
-            self.replace_br(lyrics_div)
             lyrics += lyrics_div.get_text() + "\n\n"
         while lyrics[-1] == "\n":
             lyrics = lyrics[:-1]
@@ -511,7 +488,6 @@ class Genius(Backend):
                 return None
 
         lyrics_div = verse_div.parent
-        self.replace_br(lyrics_div)
 
         ads = lyrics_div.find_all(
             "div", class_=re.compile("InreadAd__Container")
@@ -547,15 +523,10 @@ class Tekstowo(Backend):
             return None
 
         song_page_html = self.fetch_text(song_page_url)
-        return self.extract_lyrics(song_page_html, artist, title)
+        return self.scrape_lyrics(song_page_html, artist, title)
 
     def parse_search_results(self, html: str) -> str | None:
-        html = _scrape_strip_cruft(html)
-        html = _scrape_merge_paragraphs(html)
-
-        soup = try_parse_html(html)
-        if not soup:
-            return None
+        soup = get_soup(html)
 
         content_div = soup.find("div", class_="content")
         if not content_div:
@@ -579,13 +550,8 @@ class Tekstowo(Backend):
 
         return self.BASE_URL + link.get("href")
 
-    def extract_lyrics(self, html: str, artist: str, title: str) -> str | None:
-        html = _scrape_strip_cruft(html)
-        html = _scrape_merge_paragraphs(html)
-
-        soup = try_parse_html(html)
-        if not soup:
-            return None
+    def scrape_lyrics(self, html: str, artist: str, title: str) -> str | None:
+        soup = get_soup(html)
 
         info_div = soup.find("div", class_="col-auto")
         if not info_div:
@@ -652,35 +618,11 @@ def _scrape_merge_paragraphs(html):
     return re.sub(r"<div .*>\s*</div>", "\n", html)
 
 
-def scrape_lyrics_from_html(html: str) -> str | None:
-    """Scrape lyrics from a URL. If no lyrics can be found, return None
-    instead.
-    """
-
-    def is_text_notcode(text):
-        if not text:
-            return False
-        length = len(text)
-        return (
-            length > 20
-            and text.count(" ") > length / 25
-            and (text.find("{") == -1 or text.find(";") == -1)
-        )
-
+def get_soup(html: str) -> BeautifulSoup:
     html = _scrape_strip_cruft(html)
     html = _scrape_merge_paragraphs(html)
 
-    # extract all long text blocks that are not code
-    soup = try_parse_html(html, parse_only=SoupStrainer(string=is_text_notcode))
-    if not soup:
-        return None
-
-    # Get the longest text element (if any).
-    strings = sorted(soup.stripped_strings, key=len, reverse=True)
-    if strings:
-        return strings[0]
-    else:
-        return None
+    return BeautifulSoup(html, "html.parser")
 
 
 class Google(Backend):
@@ -692,6 +634,16 @@ class Google(Backend):
         super().__init__(config, log)
         self.api_key = config["google_API_key"].as_str()
         self.engine_id = config["google_engine_ID"].as_str()
+
+    @staticmethod
+    def scrape_lyrics(html: str) -> str | None:
+        soup = get_soup(html)
+
+        # Get the longest text element (if any).
+        strings = sorted(soup.stripped_strings, key=len, reverse=True)
+        if strings:
+            return strings[0]
+        return None
 
     def is_lyrics(self, text, artist=None):
         """Determine whether the text seems to be valid lyrics."""
@@ -790,7 +742,7 @@ class Google(Backend):
                     url_link, url_title, title, artist
                 ):
                     continue
-                lyrics = scrape_lyrics_from_html(self.fetch_text(url_link))
+                lyrics = self.scrape_lyrics(self.fetch_text(url_link))
                 if not lyrics:
                     continue
 
