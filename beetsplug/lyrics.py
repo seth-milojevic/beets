@@ -57,20 +57,6 @@ DIV_RE = re.compile(r"<(/?)div>?", re.I)
 COMMENT_RE = re.compile(r"<!--.*-->", re.S)
 TAG_RE = re.compile(r"<[^>]*>")
 BREAK_RE = re.compile(r"\n?\s*<br([\s|/][^>]*)*>\s*\n?", re.I)
-URL_CHARACTERS = {
-    "\u2018": "'",
-    "\u2019": "'",
-    "\u201c": '"',
-    "\u201d": '"',
-    "\u2010": "-",
-    "\u2011": "-",
-    "\u2012": "-",
-    "\u2013": "-",
-    "\u2014": "-",
-    "\u2015": "-",
-    "\u2016": "-",
-    "\u2026": "...",
-}
 USER_AGENT = f"beets/{beets.__version__}"
 
 # The content for the base index.rst generated in ReST mode.
@@ -301,21 +287,6 @@ class Backend(RequestHandler, metaclass=BackendType):
         self._log = log
         self.config = config
 
-    @staticmethod
-    def _encode(s):
-        """Encode the string for inclusion in a URL"""
-        if isinstance(s, str):
-            for char, repl in URL_CHARACTERS.items():
-                s = s.replace(char, repl)
-            s = s.encode("utf-8", "ignore")
-        return urllib.parse.quote(s)
-
-    def build_url(self, artist, title):
-        return self.URL_PATTERN % (
-            self._encode(artist.title()),
-            self._encode(title.title()),
-        )
-
     def fetch(self, artist, title, album=None, length=None):
         raise NotImplementedError
 
@@ -398,14 +369,21 @@ class MusiXmatch(Backend):
         r"[\]\}]": ")",
     }
 
-    URL_PATTERN = "https://www.musixmatch.com/lyrics/%s/%s"
+    URL_PATTERN = "https://www.musixmatch.com/lyrics/{}/{}"
 
     @classmethod
-    def _encode(cls, s):
+    def _encode(cls, s: str) -> str:
+        s = unidecode(s)
         for old, new in cls.REPLACEMENTS.items():
             s = re.sub(old, new, s)
 
-        return super()._encode(s)
+        return urllib.parse.quote(s)
+
+    def build_url(self, artist, title):
+        return self.URL_PATTERN.format(
+            self._encode(artist.title()),
+            self._encode(title.title()),
+        )
 
     def fetch(self, artist, title, album=None, length=None):
         url = self.build_url(artist, title)
@@ -557,8 +535,14 @@ class Tekstowo(Backend):
     # Fetch lyrics from Tekstowo.pl.
     REQUIRES_BS = True
 
-    BASE_URL = "http://www.tekstowo.pl"
-    URL_PATTERN = BASE_URL + "/wyszukaj.html?search-title=%s&search-artist=%s"
+    BASE_URL = "https://www.tekstowo.pl"
+    URL_PATTERN = BASE_URL + "/szukaj,{}.html"
+
+    def build_url(self, artist, title):
+        artistitle = f"{artist.title()} {title.title()}"
+        return self.URL_PATTERN.format(
+            urllib.parse.quote_plus(unidecode(artistitle))
+        )
 
     def fetch(self, artist, title, album=None, length=None):
         url = self.build_url(title, artist)
