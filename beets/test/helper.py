@@ -563,6 +563,10 @@ class ImportHelper(TestHelper):
     def import_dir(self) -> bytes:
         return bytestring_path(self.import_path)
 
+    @cached_property
+    def album_import_path(self) -> Path:
+        return self.import_path / "album"
+
     def setUp(self):
         super().setUp()
         self.import_media = []
