@@ -89,7 +89,8 @@ RELEASE_INCLUDES = [
     "isrcs",
     "url-rels",
     "release-rels",
-]
+    "tags",
+] & set(musicbrainzngs.VALID_INCLUDES["release"])
 BROWSE_INCLUDES = [
     "artist-credits",
     "work-rels",
@@ -104,11 +105,6 @@ BROWSE_MAXTRACKS = 500
 TRACK_INCLUDES = ["artists", "aliases", "isrcs"]
 if "work-level-rels" in musicbrainzngs.VALID_INCLUDES["recording"]:
     TRACK_INCLUDES += ["work-level-rels", "artist-rels"]
-if "tags" in [
-    musicbrainzngs.VALID_INCLUDES["release"],
-    musicbrainzngs.VALID_INCLUDES["release-group"],
-]:
-    RELEASE_INCLUDES += ["tags"]
 
 
 def track_url(trackid: str) -> str:
